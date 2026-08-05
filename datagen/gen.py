@@ -23,6 +23,7 @@ import argparse
 import random
 import sys
 import time
+from datetime import datetime, timezone
 
 
 def parse_args():
@@ -85,13 +86,20 @@ def main():
         return ("withdraw", rng.randrange(40, 450))
 
     tick = 10
+    group = 0
     emitted = 0
     batch = []
     started = time.time()
 
     def ts_expr():
         if a.mode == "realtime":
-            return "now()"
+            # One wall-clock instant per tie group, spaced at the pacing rate. Server-side now()
+            # cannot be used here: it is fixed per statement, so an entire --batch of rows would
+            # land on a single timestamp — collapsing --ties into batch-sized tie groups and
+            # leaving a chain's deposit/bet/withdraw mutually unordered under ORDER BY ts (the
+            # pattern then matches by luck or not at all).
+            t = started + group * a.ties / a.rate
+            return "'" + datetime.fromtimestamp(t, timezone.utc).isoformat(sep=" ") + "'"
         return str(tick)
 
     print("set rw_implicit_flush to true;")
@@ -112,6 +120,7 @@ def main():
                     if ahead > 0:
                         print(f"select pg_sleep({ahead:.3f});")
         tick += a.tick_gap
+        group += 1
     if batch:
         print(f"insert into {a.table} values " + ", ".join(batch) + ";")
     # Watermark sentinel far past everything (bulk mode; realtime advances by itself).

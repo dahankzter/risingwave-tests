@@ -25,9 +25,16 @@ BASE=$(( (($(date +%s) % 86400)) * 100 + 100000000 ))
 lat_ms=()
 for ((i = 0; i < ROUNDS; i++)); do
   pid=$((BASE + i))
+  # Separate statements per event: now() is fixed for the whole statement, so a single INSERT
+  # would give the deposit and the bet an identical ts and leave them unordered under ORDER BY ts
+  # — the (d b+ w) pattern would then match by luck, and a miss shows up as a bogus TIMEOUT.
+  # Both run before t0, so the extra round trip is outside the measurement.
   "$PSQL" "${FLAGS[@]}" -c \
     "set rw_implicit_flush to true;
-     insert into $TABLE values ($pid, now(), 'deposit', 100), ($pid, now(), 'bet', 10);" > /dev/null
+     insert into $TABLE values ($pid, now(), 'deposit', 100);" > /dev/null
+  "$PSQL" "${FLAGS[@]}" -c \
+    "set rw_implicit_flush to true;
+     insert into $TABLE values ($pid, now(), 'bet', 10);" > /dev/null
   t0=$(python3 -c 'import time; print(time.time_ns()//1_000_000)')
   "$PSQL" "${FLAGS[@]}" -c \
     "set rw_implicit_flush to true;
