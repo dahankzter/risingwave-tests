@@ -29,8 +29,11 @@ make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-m
 
 Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--mr--<sha>--<branch>`:
 
-- `…--mr--0bc2acb--feat-match-recognize-v2` — the ordered-input architecture (PR #26584), current
-  PR head: review-round fixes, operator metrics, design doc.
+- `…--mr--bee0fbd--feat-match-recognize-v2` — current PR head: all six review rounds (incl. the
+  budget-truncation and calendar-interval WITHIN fixes, the `_match_id` epoch floor, and the
+  allocation/hot-path perf batch). Proto wire format changed vs older tags — do not mix a frontend
+  and compute node from different tags.
+- `…--mr--0bc2acb--feat-match-recognize-v2` / `…--mr--9e0f3f9--…` — earlier v2 heads.
 - `…--mr--5e4ef85--feat-match-recognize-v2` — same architecture, before the metrics commit (the
   `stream_match_recognize_*` counters are absent in this build).
 - `…--mr--231d979--feat-match-recognize-parser` — the earlier EOWC-based architecture (PR #25899),
@@ -38,6 +41,10 @@ Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--m
 
 The package is public; the images are **linux/amd64 only**. On Apple Silicon the images run emulated (the Makefile pins `--platform linux/amd64`): fine for
 smoke/semantics runs, not for performance numbers — run `scenarios/perf/` on the Linux rig.
+
+**Always `make clean` when switching between tags with different wire formats** — the data volume
+carries meta/stream-plan state, and a build recovering state persisted by an incompatible tag
+aborts at startup (barrier recovery bootstrap crash).
 
 ## Layout
 

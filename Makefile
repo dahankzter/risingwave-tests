@@ -1,7 +1,7 @@
 # Test bench for risingwave-mr images. Podman-only (this machine has no docker); a single
 # container needs no compose.
 
-RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--0bc2acb--feat-match-recognize-v2
+RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2
 NAME     ?= rw-tests
 PSQL     ?= /opt/homebrew/opt/libpq/bin/psql
 PSQLFLAGS = -h localhost -p 4566 -d dev -U root -v ON_ERROR_STOP=1
