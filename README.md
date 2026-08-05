@@ -15,6 +15,19 @@ make smoke             # run every scenario and assert against expected/
 make down              # stop; make clean also removes the data volume
 ```
 
+`make up` needs nothing but podman. A `compose.yaml` is also provided for anyone who prefers
+compose — but note that `podman compose` ships **no** provider of its own and fails with
+`looking up compose provider failed` unless docker-compose or podman-compose is installed:
+
+```sh
+podman compose up -d      # or: docker compose up -d
+podman compose down       # add -v to drop the data volume too
+```
+
+The two are interchangeable: same container name, same volume, same pinned image, so `make psql`,
+`make smoke`, `make logs`, `make down` and `make clean` all work against a compose-started
+cluster. Keep `RW_IMAGE` in step between the two files when repinning.
+
 The image is pinned in the `RW_IMAGE` variable in the Makefile; override per
 invocation to compare versions:
 
