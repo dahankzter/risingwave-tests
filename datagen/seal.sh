@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-PSQL="${PSQL:-$(command -v psql || echo /opt/homebrew/opt/libpq/bin/psql)}"
+PSQL="${PSQL:-psql}"
 FLAGS=(-h 127.0.0.1 -p 4566 -d dev -U root -q -t -A)
 TABLE="${TABLE:-t_perf}"
 MV="${MV:-mv_perf}"

@@ -16,7 +16,7 @@
 
 set -uo pipefail
 
-PSQL="${PSQL:-$(command -v psql || echo /opt/homebrew/opt/libpq/bin/psql)}"
+PSQL="${PSQL:-psql}"
 PSQLFLAGS=(-h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1 -X)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_DIR="$ROOT/expected"

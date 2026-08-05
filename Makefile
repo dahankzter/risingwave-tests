@@ -3,9 +3,9 @@
 
 RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2
 NAME     ?= rw-tests
-# Prefer whatever is on PATH (the Linux rig); fall back to the Homebrew keg-only libpq, which a
-# Mac does not put on PATH. Override with PSQL=... for anything else.
-PSQL     ?= $(shell command -v psql 2>/dev/null || echo /opt/homebrew/opt/libpq/bin/psql)
+# Whatever is on PATH. A Mac with keg-only Homebrew libpq does not put psql on PATH, so set it
+# in the environment there:  export PSQL=/opt/homebrew/opt/libpq/bin/psql
+PSQL     ?= psql
 # 127.0.0.1, not localhost: podman publishes the port on IPv4 only, and a host that resolves
 # localhost to ::1 first (the Linux rig does) gets a connection reset instead of a connection.
 PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
@@ -105,4 +105,4 @@ rt-load:
 	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q
 
 latency:
-	ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh
+	PSQL=$(PSQL) ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh

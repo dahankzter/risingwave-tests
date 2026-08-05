@@ -13,9 +13,7 @@
 
 set -euo pipefail
 
-# Prefer whatever is on PATH (the Linux rig); fall back to the Homebrew keg-only libpq, which a
-# Mac does not put on PATH.
-PSQL="${PSQL:-$(command -v psql || echo /opt/homebrew/opt/libpq/bin/psql)}"
+PSQL="${PSQL:-psql}"
 FLAGS=(-h 127.0.0.1 -p 4566 -d dev -U root -q -t -A)
 ROUNDS="${ROUNDS:-10}"
 TABLE="${TABLE:-t_rt}"

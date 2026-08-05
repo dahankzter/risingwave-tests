@@ -15,6 +15,13 @@ make smoke             # run every scenario and assert against expected/
 make down              # stop; make clean also removes the data volume
 ```
 
+Everything shells out to `psql` from `PATH`. Homebrew's libpq is keg-only and does not land on
+`PATH`, so on a Mac set it once in your environment:
+
+```sh
+export PSQL=/opt/homebrew/opt/libpq/bin/psql
+```
+
 `make up` needs nothing but podman. A `compose.yaml` is also provided for anyone who prefers
 compose — but note that `podman compose` ships **no** provider of its own and fails with
 `looking up compose provider failed` unless docker-compose or podman-compose is installed:
