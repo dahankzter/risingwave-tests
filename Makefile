@@ -19,15 +19,30 @@ export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
 help:
-	@echo "cluster:  up  down  clean  wait  logs  psql"
-	@echo "tests:    smoke              assert scenarios against expected/"
-	@echo "          bless              re-record expected/"
-	@echo "          run S=path.sql     run one scenario, echoing statements"
-	@echo "load:     load-setup, load PROFILE=small|fraud|hotspot [ROWS=n]"
-	@echo "          rt-setup, rt-load [RATE=n], latency [ROUNDS=n]"
+	@echo "usage: make <target>"
 	@echo
-	@echo "image:    $(RW_IMAGE)"
-	@echo "psql:     $(PSQL)   (override with PSQL=...)"
+	@echo "  # cluster"
+	@echo "  up                       start the pinned image (recreates any leftover container)"
+	@echo "  down                     stop and remove the container"
+	@echo "  clean                    down, and drop the data volume"
+	@echo "  wait                     block until pgwire answers on :4566"
+	@echo "  logs                     follow container logs"
+	@echo "  psql                     interactive session"
+	@echo
+	@echo "  # tests"
+	@echo "  smoke                    run scenarios, assert against expected/"
+	@echo "  bless                    re-record expected/"
+	@echo "  run S=<file.sql>         run one scenario, echoing statements"
+	@echo
+	@echo "  # load and latency"
+	@echo "  load-setup               create the bulk table and MV"
+	@echo "  load [PROFILE=] [ROWS=]  feed and seal; PROFILE=small|fraud|hotspot"
+	@echo "  rt-setup                 create the realtime table and MV"
+	@echo "  rt-load [RATE=] [ROWS=]  realtime background feed"
+	@echo "  latency [ROUNDS=]        insert->alert delay, p50/p95"
+	@echo
+	@echo "image: $(RW_IMAGE)"
+	@echo "psql:  $(PSQL)   (override with PSQL=...)"
 
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
