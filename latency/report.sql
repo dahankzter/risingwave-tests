@@ -14,5 +14,5 @@ select
   round(max(secs)::numeric, 3)                                      as max_s
 from (
   select extract(epoch from (alert_ts - trigger_ingest_ts)) as secs
-  from t_lat_alerts
+  from t_rt_alerts
 ) s;

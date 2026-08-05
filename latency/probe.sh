@@ -18,6 +18,9 @@ FLAGS=(-h 127.0.0.1 -p 4566 -d dev -U root -q -t -A)
 ROUNDS="${ROUNDS:-10}"
 TABLE="${TABLE:-t_rt}"
 MV="${MV:-mv_rt}"
+# on (default): advance the watermark ourselves, so the probe runs standalone.
+# off: something else is feeding the table -- do not perturb it. See the poll loop below.
+SENTINEL="${SENTINEL:-on}"
 
 # Per-run-unique probe partitions: reusing pids across runs would let leftover rows from an
 # earlier (aborted) run satisfy the poll instantly and fake a fast round. Seeded from the clock
@@ -37,24 +40,30 @@ for ((i = 0; i < ROUNDS; i++)); do
   # Both run before t0, so the extra round trip is outside the measurement.
   "$PSQL" "${FLAGS[@]}" -c \
     "set rw_implicit_flush to true;
-     insert into $TABLE values ($pid, now(), 'deposit', 100);" > /dev/null
+     insert into $TABLE (id, ts, kind, amount) values ($pid, now(), 'deposit', 100);" > /dev/null
   "$PSQL" "${FLAGS[@]}" -c \
     "set rw_implicit_flush to true;
-     insert into $TABLE values ($pid, now(), 'bet', 10);" > /dev/null
+     insert into $TABLE (id, ts, kind, amount) values ($pid, now(), 'bet', 10);" > /dev/null
   t0=$(python3 -c 'import time; print(time.time_ns()//1_000_000)')
   "$PSQL" "${FLAGS[@]}" -c \
     "set rw_implicit_flush to true;
-     insert into $TABLE values ($pid, now(), 'withdraw', 90);" > /dev/null
+     insert into $TABLE (id, ts, kind, amount) values ($pid, now(), 'withdraw', 90);" > /dev/null
   polls=0
   while :; do
     n=$("$PSQL" "${FLAGS[@]}" -c "select count(*) from $MV where partition_0 = $pid;")
     [ "$n" -ge 1 ] && break
     polls=$((polls + 1))
-    # Keep the watermark moving ourselves (sentinel partition 0): the probe must not depend on
-    # background load for watermark progress — the release delay it causes is part of the
-    # measured latency either way.
-    if [ $((polls % 10)) -eq 0 ]; then
-      "$PSQL" "${FLAGS[@]}" -c "set rw_implicit_flush to true; insert into $TABLE values (0, now(), 'noop', 0);" > /dev/null
+    # Keep the watermark moving ourselves (sentinel partition 0), so the probe works standalone
+    # rather than depending on background load for watermark progress. The release delay it causes
+    # is part of the measured latency either way.
+    #
+    # SENTINEL=off when something else is already supplying traffic. These rows carry now(), which
+    # is ahead of the paced generator's event time, so they advance the watermark for the WHOLE
+    # table and release the background traffic's matches early -- measured on the rig, running the
+    # probe alongside a feed dropped that feed's server-side p50 from 7.236s to 3.396s. Left on,
+    # the probe silently perturbs the very workload the other measurement is reporting on.
+    if [ "$SENTINEL" != "off" ] && [ $((polls % 10)) -eq 0 ]; then
+      "$PSQL" "${FLAGS[@]}" -c "set rw_implicit_flush to true; insert into $TABLE (id, ts, kind, amount) values (0, now(), 'noop', 0);" > /dev/null
     fi
     if [ "$polls" -gt 1500 ]; then
       echo "round $i: TIMEOUT after 30s+ — pipeline not emitting (check the MV and watermark)" >&2

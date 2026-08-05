@@ -72,8 +72,9 @@ aborts at startup (barrier recovery bootstrap crash).
   shape `(a? ×16 b)`, which the failure memo and the scan budget must keep from going exponential.
 - `scenarios/perf/` — load setups: bulk throughput (`setup_bulk.sql`), realtime with wall-clock
   timestamps (`setup_realtime.sql`), and hot-partition skew (`hot_partition.sql`).
-- `latency/` — the end-to-end decision-latency probe: time from inserting a match's completing
-  event to the alert row appearing in the MV, with p50/p95 over N rounds.
+- `latency/` — decision-latency measurement: `probe.sh` (client-side, polls the MV), `report.sql`
+  (server-side, from the proctime stamps every match records for itself), and `bench.sh`, which
+  runs the pipeline, the traffic and both measurements in one command.
 - `datagen/gen.py` — the workload generator: partitions, rows, hot-partition skew
   (`--hot-count/--hot-share`), fraud-shaped event chains with configurable abandonment
   (`--abandon-prob` — abandoned chains become retained open partials, the interesting state
@@ -88,8 +89,8 @@ aborts at startup (barrier recovery bootstrap crash).
 ```sh
 make load-setup && make load PROFILE=fraud      # 1M rows, 100k partitions, mild skew, 25% open partials
 make load PROFILE=hotspot                        # one partition takes 90% of traffic
-make rt-setup && make rt-load &                  # realtime background load (wall-clock ts)
-make latency ROUNDS=20                           # p50/p95 insert->alert delay under that load
+make bench                                       # whole realtime latency benchmark, both numbers
+make bench ROUNDS=20 RATE=5000                   # ... with more probe rounds and heavier traffic
 ```
 
 Measured on the Linux rig (native amd64, 64 cores) against `bee0fbd`:
@@ -97,24 +98,27 @@ Measured on the Linux rig (native amd64, 64 cores) against `bee0fbd`:
 | | |
 |---|---|
 | bulk ingest, fraud profile | ~92k rows/s (200k rows, 100k partitions, 100 hot @ 30%, 25% abandoned) |
-| decision latency, client probe | p50 6448 ms, p95 6676 ms, min 5412 ms (20 rounds @ 2k rows/s) |
-| decision latency, server-side | p50 7334 ms, p95 8243 ms, min 6553 ms (7660 matches @ 2k rows/s) |
+| decision latency [1] client probe | p50 6318 ms, p95 6462 ms, min 5996 ms (8 rounds @ 2k rows/s) |
+| decision latency [2] server-side | p50 6048 ms, p95 6413 ms, min 5104 ms (39801 matches @ 2k rows/s) |
 
 There are two latency measurements because they answer different questions. `make latency` runs a
 client probe: insert a chain's completing event, poll the MV until the match shows up. That is
-what a consumer polling the MV feels, but it samples only the rounds it drives. `make lat-setup
-&& make lat-load && make lat-report` instead has the cluster measure itself — a `proctime()`
-column stamps each event on arrival, MATCH_RECOGNIZE carries that stamp out as a measure, and a
-sink into a second `proctime()` table stamps the match on arrival. Every match then stores its own
-delay, so the distribution comes from the whole workload rather than 20 synthetic rounds.
+what a consumer polling the MV feels, but it samples only the rounds it drives. `make lat-report`
+instead has the cluster measure itself — a `proctime()` column stamps each event on arrival,
+MATCH_RECOGNIZE carries that stamp out as a measure, and a sink into a second `proctime()` table
+stamps the match on arrival. Every match stores its own delay, so the distribution comes from the
+whole workload rather than a handful of synthetic rounds. Both run off one pipeline
+(`scenarios/perf/setup_realtime.sql`); `make bench` does the whole sequence.
 
-The server-side number reads **higher** because it waits one hop further — across the sink into a
-table, not merely into the MV. The ~0.9s gap between the two is that sink.
+The two land close together: [2] waits one hop further (across the sink into a table), while [1]
+adds a client round trip and 20ms of poll granularity, and those roughly cancel. `make bench` runs
+the probe with `SENTINEL=off` so it does not advance the watermark itself — left on, the probe's
+`now()` rows release the background traffic's matches early and [2] reads far too low.
 
 Both figures include the 5s watermark delay declared on the realtime table, so the
-operator and pipeline account for roughly 1.4s of the probe number. That is the honest end-to-end number an
-alerting consumer sees; tighten the watermark to trade late-event tolerance for alert speed. For
-reference, the same probe on emulated Apple Silicon reported ~9.4s p50.
+operator and pipeline account for roughly 1.3s of the probe number; tighten the watermark to trade
+late-event tolerance for alert speed. For reference, the same probe on emulated Apple Silicon
+reported ~9.4s p50.
 
 ### Sealing a bulk feed
 

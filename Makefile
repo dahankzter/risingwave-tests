@@ -14,7 +14,7 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load latency lat-setup lat-load lat-report
+.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report
 
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
@@ -37,12 +37,12 @@ help:
 	@echo "  # load and latency"
 	@echo "  load-setup               create the bulk table and MV"
 	@echo "  load [PROFILE=] [ROWS=]  feed and seal; PROFILE=small|fraud|hotspot"
-	@echo "  rt-setup                 create the realtime table and MV"
-	@echo "  rt-load [RATE=] [ROWS=]  realtime background feed"
-	@echo "  latency [ROUNDS=]        insert->alert delay, client probe, p50/p95"
-	@echo "  lat-setup                server-side latency pipeline (proctime stamps)"
-	@echo "  lat-load [RATE=] [ROWS=] feed it"
-	@echo "  lat-report               p50/p95/p99 over every match measured"
+	@echo "  bench [ROWS=] [RATE=] [ROUNDS=]"
+	@echo "                           the whole realtime latency benchmark, both numbers"
+	@echo "    rt-setup               ... build the pipeline"
+	@echo "    rt-load [RATE=][ROWS=] ... background traffic"
+	@echo "    latency [ROUNDS=]      ... [1] client probe: insert -> visible in mv_rt"
+	@echo "    lat-report             ... [2] server-side: every match, incl. the sink hop"
 	@echo
 	@echo "image: $(RW_IMAGE)"
 	@echo "psql:  $(PSQL)   (override with PSQL=...)"
@@ -141,17 +141,15 @@ rt-setup:
 rt-load:
 	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q -o /dev/null
 
+# One command for the whole realtime benchmark: build the pipeline, run traffic, take both
+# measurements, print them together. Everything below is the same run done by hand.
+bench:
+	@PSQL=$(PSQL) $(if $(ROWS),ROWS=$(ROWS)) $(if $(RATE),RATE=$(RATE)) $(if $(ROUNDS),ROUNDS=$(ROUNDS)) ./latency/bench.sh
+
+# [1] client-side: insert, then poll mv_rt until the match appears.
 latency:
 	PSQL=$(PSQL) ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh
 
-# Server-side variant: every match carries its own measured delay, so the distribution comes from
-# the real load instead of from probe rounds. See scenarios/perf/setup_latency.sql for how the two
-# differ and why both are worth having.
-lat-setup:
-	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_latency.sql
-
-lat-load:
-	$(GEN) --table t_lat --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q -o /dev/null
-
+# [2] server-side: the proctime stamps every match recorded for itself, over the whole load.
 lat-report:
 	@$(PSQL) $(PSQLFLAGS) -f latency/report.sql

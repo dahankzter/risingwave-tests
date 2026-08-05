@@ -69,6 +69,9 @@ def main():
     rng = random.Random(a.seed)
     payload = lambda: "'" + ("x" * a.payload_bytes) + "'"
     pay_cols = "".join(f", {payload()}" for _ in range(a.payload_cols))
+    # Name the columns explicitly: the realtime table carries a generated proctime column
+    # (ingest_ts), so a positional INSERT would not line up with the table shape.
+    col_list = "(id, ts, kind, amount" + "".join(f", p{i}" for i in range(a.payload_cols)) + ")"
 
     # Per-partition chain state: absent = idle, [remaining_bets, abandoned] = mid-chain.
     state = {}
@@ -101,7 +104,6 @@ def main():
     tick = 10
     group = 0
     emitted = 0
-    slept = 0.0     # seconds of pacing already emitted into the stream
     batch = []
     started = time.time()
 
@@ -135,23 +137,28 @@ def main():
             batch.append(f"({pid}, {ts_expr()}, '{kind}', {amount}{pay_cols})")
             emitted += 1
             if len(batch) >= a.batch:
-                print(f"insert into {a.table} values " + ", ".join(batch) + ";")
+                print(f"insert into {a.table} {col_list} values " + ", ".join(batch) + ";")
                 batch.clear()
                 if a.mode == "realtime":
-                    # Pace by accounting, not by this process's clock: the sleeps execute inside
-                    # psql, so generator elapsed time is meaningless here. Using it emitted the
-                    # cumulative target as each sleep (0.25s, 0.50s, 0.75s ...) whenever the
-                    # stream fit in the pipe buffer -- 4000 rows at 2000/s slept 8.97s instead of
-                    # 2s. Emit only the increment not yet slept, so the total is exactly
-                    # rows/rate however fast the generator runs.
-                    target = emitted / a.rate
-                    if target > slept:
-                        print(f"select pg_sleep({target - slept:.3f});")
-                        slept = target
+                    # Sleep until an ABSOLUTE wall-clock target, evaluated server-side, rather
+                    # than for a fixed duration. Event timestamps are the same schedule, so this
+                    # keeps event time pinned to real time.
+                    #
+                    # A fixed pg_sleep cannot do that. Sleeping the exact increment makes total
+                    # sleep rows/rate, which ignores the time the INSERTs themselves take, so the
+                    # schedule creeps ahead of the wall clock. Once it leads by more than the
+                    # watermark delay, the table's watermark sits in the future and anything
+                    # inserted with now() -- the latency probe's own rows -- is dropped as late.
+                    # That showed up as probe rounds climbing 6s, 24s, 31s, timeout.
+                    # (Sleeping the cumulative target instead is worse still: 4000 rows at 2000/s
+                    # slept 8.97s rather than 2s.)
+                    target = datetime.fromtimestamp(started + emitted / a.rate, timezone.utc)
+                    print("select pg_sleep(greatest(0, extract(epoch from ("
+                          f"'{target.isoformat(sep=' ')}'::timestamptz - now()))));")
         tick += a.tick_gap
         group += 1
     if batch:
-        print(f"insert into {a.table} values " + ", ".join(batch) + ";")
+        print(f"insert into {a.table} {col_list} values " + ", ".join(batch) + ";")
     # No watermark sentinel is emitted here, deliberately: sealing a bulk feed is a separate step
     # (datagen/seal.sh), because it is only safe once the pipeline has actually drained.
     #
