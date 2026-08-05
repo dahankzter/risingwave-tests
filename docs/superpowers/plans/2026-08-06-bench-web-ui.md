@@ -18,6 +18,7 @@
 - Realtime event timestamps are taken at insert time from the real clock. Never from an accumulated schedule.
 - `make smoke` must pass unchanged after every task — 5 scenarios, all ok.
 - CPU pinning defaults to OFF. Every number in the README today was measured unpinned and is not comparable to a pinned run.
+- **The UI follows Material 3 Expressive.** Implemented as hand-written CSS custom properties, not a component library: the binary is self-contained via `rust-embed`, so `@material/web` from a CDN is not available and a node build step is out of scope. No network fetch at runtime — that includes web fonts.
 
 ## What already exists
 
@@ -754,6 +755,41 @@ Requirements, not a mockup to copy:
 - Reconnect the WebSocket automatically with backoff, and show connection state. A demo that dies silently on a dropped socket is worse than one that says it dropped.
 
 No build step and no CDN: plain ES modules and hand-written CSS, embedded with `rust-embed` so the binary is self-contained.
+
+**Material 3 Expressive**, hand-rolled as CSS custom properties in `style.css`. Define these token
+groups and use them everywhere — no ad-hoc hex values or pixel radii in component rules:
+
+- **Colour roles**, both schemes, switched by `@media (prefers-color-scheme: dark)`:
+  `--md-sys-color-{primary,on-primary,primary-container,on-primary-container,secondary,
+  secondary-container,tertiary,tertiary-container,surface,on-surface,surface-variant,
+  on-surface-variant,surface-container-{low,high,highest},outline,outline-variant,error,
+  on-error,error-container}`. Pick a source colour and derive a coherent set; state which source
+  you used in the report. Alert severity must not rely on hue alone — pair colour with the chain
+  shape text so it survives a colourblind viewer and a projector.
+- **Shape scale**, which is where Expressive departs most from baseline M3 — it goes rounder and
+  more varied: `--md-sys-shape-corner-{xs:4px, s:8px, m:12px, l:16px, xl:28px, full:9999px}`.
+  Use `xl` for the gauge and chart cards, `l` for the feed container, `full` for buttons and the
+  rate slider thumb.
+- **Type scale**: `--md-sys-typescale-{display,headline,title,body,label}-{large,medium,small}`
+  as `font-size`/`line-height`/`weight` triples. Expressive leans on weight and size contrast —
+  the speedometer number is display-large, its caption label-small, and the gap between them
+  should be obvious at a glance from across a room.
+- **Motion**, the other Expressive signature — spring-based rather than uniform easing:
+  `--md-sys-motion-spring-{fast,default,slow}` as `linear()` or `cubic-bezier` approximations,
+  plus `--md-sys-motion-duration-{short,medium,long}`. New feed rows enter on a spring; the
+  speedometer needle and the rate slider use the spring rather than `ease-in-out`.
+- **Elevation**: `--md-sys-elevation-level{0..3}` as box-shadow triples, on the cards only.
+
+Constraints that follow from the setting rather than the spec:
+- `prefers-reduced-motion: reduce` must drop the springs to near-instant. A feed at 20 rows/s with
+  spring animation is genuinely unpleasant for a motion-sensitive viewer.
+- Fonts: system stack (`system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif`). Roboto Flex is
+  M3's type face, but fetching it from Google Fonts breaks the no-network rule and embedding a
+  variable font adds ~1.5MB to the binary. Note the deviation in the report; if a colleague wants
+  true Roboto Flex later, embedding it is a self-contained change.
+- Contrast: body text and every number a viewer is expected to read must meet WCAG AA (4.5:1)
+  against its surface in both schemes. Check the speedometer caption and the feed's dimmed older
+  rows specifically — fading old entries is where this usually breaks.
 
 - [ ] **Step 2: Verify by hand against real traffic**
 
