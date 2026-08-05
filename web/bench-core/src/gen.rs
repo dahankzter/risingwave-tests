@@ -197,6 +197,7 @@ mod tests {
         let mut g = Generator::new(Config { abandon_prob: 1.0, ..cfg() }).unwrap();
         let kinds: Vec<Kind> = (0..40).map(|_| g.next_event().kind).collect();
         assert!(!kinds.contains(&Kind::Withdraw), "abandoned chains must not withdraw");
+        assert!(kinds.contains(&Kind::Bet), "an abandoned chain must still run its bets");
         assert!(kinds.iter().filter(|k| **k == Kind::Deposit).count() > 1,
                 "a new chain must open after an abandoned one");
     }
