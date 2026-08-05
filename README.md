@@ -1,12 +1,9 @@
 # risingwave-tests
 
-A personal test bench for the MATCH_RECOGNIZE contribution to RisingWave
+A test bench for the MATCH_RECOGNIZE contribution to RisingWave
 ([risingwavelabs/risingwave#26584](https://github.com/risingwavelabs/risingwave/pull/26584)):
 scenario scripts, adversarial patterns, and performance probes run against published
 `risingwave-mr` images.
-
-**Identity note:** this repo belongs to the personal open-source track (`dahankzter`). Nothing
-work-related lands here, and nothing here references work systems or data.
 
 ## Usage
 
