@@ -60,8 +60,12 @@ insert into events values
   (1, '2026-08-05 10:50:00', 'deposit', 100), (1, '2026-08-05 10:51:00', 'bet', 40), (1, '2026-08-05 10:52:00', 'withdraw', 90),
   (0, '2026-08-05 11:30:00', 'noop', 0);
 
--- The internal sink is asynchronous (not covered by implicit flush across the sink boundary).
-select pg_sleep(3);
+-- The internal sink is asynchronous (implicit flush does not span the sink boundary). Two
+-- barriers, not a timed sleep: the first carries the level-1 matches through the sink into
+-- ring_events, the second carries those rows through the level-2 matcher. A fixed sleep would be
+-- both slower than needed here and too short on a loaded or emulated host.
+flush;
+flush;
 
 \echo 'expect: 4 level-1 rings'
 select * from rings order by ts;

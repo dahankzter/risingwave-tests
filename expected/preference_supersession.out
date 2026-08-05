@@ -1,0 +1,53 @@
+SET_VARIABLE
+SET_VARIABLE
+DROP_MATERIALIZED_VIEW
+DROP_MATERIALIZED_VIEW
+DROP_TABLE
+CREATE_TABLE
+CREATE_MATERIALIZED_VIEW
+INSERT 0 4
+expect: 0 rows
+ partition_0 | len | last_var
+-------------+-----+----------
+(0 rows)
+
+INSERT 0 2
+expect: (1, 4, d)
+ partition_0 | len | last_var
+-------------+-----+----------
+           1 |   4 | d
+(1 row)
+
+INSERT 0 4
+expect: (1, 4, d) and (2, 2, b)
+ partition_0 | len | last_var
+-------------+-----+----------
+           1 |   4 | d
+           2 |   2 | b
+(2 rows)
+
+CREATE_MATERIALIZED_VIEW
+INSERT 0 3
+expect: 0 rows
+ partition_0 | len | last_var
+-------------+-----+----------
+(0 rows)
+
+INSERT 0 2
+expect: (3, 3, n)
+ partition_0 | len | last_var
+-------------+-----+----------
+           3 |   3 | n
+(1 row)
+
+INSERT 0 2
+expect: (3, 3, n) and (5, 1, n)
+ partition_0 | len | last_var
+-------------+-----+----------
+           3 |   3 | n
+           5 |   1 | n
+(2 rows)
+
+DROP_MATERIALIZED_VIEW
+DROP_MATERIALIZED_VIEW
+DROP_TABLE

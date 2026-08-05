@@ -1,0 +1,35 @@
+SET_VARIABLE
+SET_VARIABLE
+DROP_MATERIALIZED_VIEW
+DROP_SINK
+DROP_MATERIALIZED_VIEW
+DROP_TABLE
+DROP_TABLE
+CREATE_TABLE
+CREATE_MATERIALIZED_VIEW
+CREATE_TABLE
+CREATE_SINK
+CREATE_MATERIALIZED_VIEW
+INSERT 0 13
+FLUSH
+FLUSH
+expect: 4 level-1 rings
+ partition_0 |         ts          | chain_len
+-------------+---------------------+-----------
+           1 | 2026-08-05 10:02:00 |         3
+           1 | 2026-08-05 10:17:00 |         3
+           1 | 2026-08-05 10:32:00 |         3
+           1 | 2026-08-05 10:52:00 |         3
+(4 rows)
+
+expect: one meta match — (1, 3, 2026-08-05 10:32:00)
+ partition_0 | rings |    last_ring_ts
+-------------+-------+---------------------
+           1 |     3 | 2026-08-05 10:32:00
+(1 row)
+
+DROP_MATERIALIZED_VIEW
+DROP_SINK
+DROP_MATERIALIZED_VIEW
+DROP_TABLE
+DROP_TABLE

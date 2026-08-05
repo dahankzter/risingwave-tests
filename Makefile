@@ -3,14 +3,18 @@
 
 RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2
 NAME     ?= rw-tests
-PSQL     ?= /opt/homebrew/opt/libpq/bin/psql
-PSQLFLAGS = -h localhost -p 4566 -d dev -U root -v ON_ERROR_STOP=1
+# Prefer whatever is on PATH (the Linux rig); fall back to the Homebrew keg-only libpq, which a
+# Mac does not put on PATH. Override with PSQL=... for anything else.
+PSQL     ?= $(shell command -v psql 2>/dev/null || echo /opt/homebrew/opt/libpq/bin/psql)
+# 127.0.0.1, not localhost: podman publishes the port on IPv4 only, and a host that resolves
+# localhost to ::1 first (the Linux rig does) gets a connection reset instead of a connection.
+PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 
 # A logged-out gcloud credential helper in ~/.docker/config.json aborts podman's credential
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: up down clean psql run smoke wait logs load-setup load rt-setup rt-load latency
+.PHONY: up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load latency
 
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
@@ -21,9 +25,25 @@ up:
 		$(RW_IMAGE) single_node
 	$(MAKE) wait
 
+# Bounded: a container that dies during startup (the classic case is barrier recovery aborting on
+# state left by an incompatible tag — see the README) must fail the target, not hang forever.
+WAIT_SECS ?= 180
 wait:
-	@echo "waiting for pgwire on :4566 ..."
-	@until $(PSQL) $(PSQLFLAGS) -c "select 1" >/dev/null 2>&1; do sleep 1; done
+	@echo "waiting for pgwire on :4566 (up to $(WAIT_SECS)s) ..."
+	@i=0; until $(PSQL) $(PSQLFLAGS) -c "select 1" >/dev/null 2>&1; do \
+		i=$$((i + 1)); \
+		if [ $$i -ge $(WAIT_SECS) ]; then \
+			echo "timed out after $(WAIT_SECS)s; last 40 log lines:" >&2; \
+			podman logs --tail 40 $(NAME) >&2 || true; \
+			exit 1; \
+		fi; \
+		if ! podman inspect -f '{{.State.Running}}' $(NAME) 2>/dev/null | grep -q true; then \
+			echo "container $(NAME) is not running; last 40 log lines:" >&2; \
+			podman logs --tail 40 $(NAME) >&2 || true; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
 	@echo "ready"
 
 down:
@@ -42,12 +62,16 @@ psql:
 run:
 	$(PSQL) $(PSQLFLAGS) -e -f $(S)
 
+# smoke asserts against recorded output in expected/ — semantics AND adversarial, since the
+# backtracking probe is deterministic and self-contained. Without the recorded files a scenario
+# only fails on a SQL error, and a silently wrong result set passes.
 smoke:
-	@for f in scenarios/semantics/*.sql; do \
-		echo "=== $$f"; \
-		$(PSQL) $(PSQLFLAGS) -f $$f || exit 1; \
-	done
-	@echo "smoke green"
+	@PSQL=$(PSQL) scenarios/check.sh
+
+# Re-record expected/*.out. Review the resulting diff against the expectations written in each
+# script's comments before committing.
+bless:
+	@PSQL=$(PSQL) scenarios/check.sh --bless
 
 # ---- Load & latency (real numbers belong on the rig; emulated runs are shape-checks only) ----
 # Profiles: small (laptop shape-check), fraud (per-player keys, mild skew, open partials),

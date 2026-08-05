@@ -9,7 +9,7 @@ operator's design doc discloses.
 Examples:
   # 1M rows over 10k partitions, 10 hot partitions taking half the traffic, 20% chains abandoned
   ./gen.py --table t_perf --partitions 10000 --rows 1000000 --hot-count 10 --hot-share 0.5 \
-           --abandon-prob 0.2 | psql -h localhost -p 4566 -d dev -U root
+           --abandon-prob 0.2 | psql -h 127.0.0.1 -p 4566 -d dev -U root
 
   # Realtime mode: wall-clock timestamps paced at 2000 rows/s (for latency probing alongside)
   ./gen.py --table t_perf --mode realtime --rate 2000 --rows 100000 | psql ...
@@ -52,7 +52,16 @@ def parse_args():
     p.add_argument("--tick-gap", type=int, default=1, help="bulk mode: ts increment between tie groups")
     p.add_argument("--sentinel-partition", type=int, default=0,
                    help="partition key reserved for watermark sentinels")
-    return p.parse_args()
+    a = p.parse_args()
+    # Cold partitions occupy (hot_count, partitions]; an empty range would blow up inside
+    # rng.randrange with a bare ValueError halfway through a run.
+    if a.hot_count and a.hot_count >= a.partitions:
+        p.error("--hot-count must be < --partitions (no cold partitions would be left)")
+    if a.rate <= 0:
+        p.error("--rate must be positive")
+    if a.ties < 1:
+        p.error("--ties must be at least 1")
+    return a
 
 
 def main():
@@ -61,7 +70,7 @@ def main():
     payload = lambda: "'" + ("x" * a.payload_bytes) + "'"
     pay_cols = "".join(f", {payload()}" for _ in range(a.payload_cols))
 
-    # Per-partition chain state: None = idle, list = [remaining_bets] mid-chain.
+    # Per-partition chain state: absent = idle, [remaining_bets, abandoned] = mid-chain.
     state = {}
     hot = set(range(1, a.hot_count + 1)) if a.hot_count else set()
     cold_lo = a.hot_count + 1
@@ -74,15 +83,19 @@ def main():
     def next_event(pid):
         s = state.get(pid)
         if s is None:
-            if rng.random() < a.abandon_prob:
-                # Start a chain destined to be abandoned: emit the deposit, then forget it.
-                return ("deposit", rng.randrange(50, 500))
-            state[pid] = rng.randrange(a.bets_min, a.bets_max + 1)
+            state[pid] = [rng.randrange(a.bets_min, a.bets_max + 1),
+                          rng.random() < a.abandon_prob]
             return ("deposit", rng.randrange(50, 500))
-        if s > 0:
-            state[pid] = s - 1
+        if s[0] > 0:
+            s[0] -= 1
             return ("bet", rng.randrange(5, 50))
         del state[pid]
+        if s[1]:
+            # Abandoned: the chain runs its bets and then simply stops, so the partition's next
+            # event opens a fresh chain and the `d b+` prefix stays buffered until its WITHIN
+            # bound expires. That retained partial is the state regime worth measuring —
+            # abandoning at the deposit instead would leave almost nothing behind.
+            return next_event(pid)
         return ("withdraw", rng.randrange(40, 450))
 
     tick = 10
@@ -126,9 +139,18 @@ def main():
     # Watermark sentinel far past everything (bulk mode; realtime advances by itself).
     if a.mode == "bulk":
         print(f"insert into {a.table} values ({a.sentinel_partition}, {tick + 1_000_000}, 'noop', 0{pay_cols});")
-    print(f"-- emitted {emitted} rows over {a.partitions} partitions "
-          f"(hot: {a.hot_count} @ {a.hot_share if a.hot_count else 0}), "
-          f"open partials ~{int(a.abandon_prob * 100)}%", file=sys.stderr)
+    elapsed = time.time() - started
+    note = (f"-- emitted {emitted} rows over {a.partitions} partitions "
+            f"(hot: {a.hot_count} @ {a.hot_share if a.hot_count else 0}), "
+            f"{len(state)} chains left open, ~{int(a.abandon_prob * 100)}% abandon rate")
+    if a.mode == "realtime":
+        # Event timestamps follow the ideal --rate schedule. If the consumer could not keep up,
+        # they drift behind wall clock, and rows can land behind a watermark advanced by another
+        # writer using server-side now() (the latency probe does exactly that).
+        note += f", achieved {emitted / elapsed:.0f} rows/s of {a.rate} requested"
+        if elapsed > 1.2 * emitted / a.rate:
+            note += "  [!] consumer could not keep up; lower --rate"
+    print(note, file=sys.stderr)
 
 
 if __name__ == "__main__":

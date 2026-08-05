@@ -1,0 +1,15 @@
+SET_VARIABLE
+SET_VARIABLE
+DROP_MATERIALIZED_VIEW
+DROP_TABLE
+CREATE_TABLE
+CREATE_MATERIALIZED_VIEW
+INSERT 0 4
+expect: (1, b)
+ partition_0 | last_var
+-------------+----------
+           1 | b
+(1 row)
+
+DROP_MATERIALIZED_VIEW
+DROP_TABLE

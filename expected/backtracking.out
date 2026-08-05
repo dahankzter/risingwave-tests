@@ -1,0 +1,22 @@
+SET_VARIABLE
+SET_VARIABLE
+DROP_MATERIALIZED_VIEW
+DROP_TABLE
+CREATE_TABLE
+CREATE_MATERIALIZED_VIEW
+INSERT 0 30
+INSERT 0 1
+expect: 0 rows (no b anywhere), returned promptly
+ partition_0 | len
+-------------+-----
+(0 rows)
+
+INSERT 0 2
+expect: one row, len = 17
+ partition_0 | len
+-------------+-----
+           1 |  17
+(1 row)
+
+DROP_MATERIALIZED_VIEW
+DROP_TABLE

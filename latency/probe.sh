@@ -13,15 +13,23 @@
 
 set -euo pipefail
 
-PSQL="${PSQL:-/opt/homebrew/opt/libpq/bin/psql}"
-FLAGS=(-h localhost -p 4566 -d dev -U root -q -t -A)
+# Prefer whatever is on PATH (the Linux rig); fall back to the Homebrew keg-only libpq, which a
+# Mac does not put on PATH.
+PSQL="${PSQL:-$(command -v psql || echo /opt/homebrew/opt/libpq/bin/psql)}"
+FLAGS=(-h 127.0.0.1 -p 4566 -d dev -U root -q -t -A)
 ROUNDS="${ROUNDS:-10}"
 TABLE="${TABLE:-t_rt}"
 MV="${MV:-mv_rt}"
 
-# Per-run unique probe partitions: reusing pids across runs would let leftover rows from an
-# earlier (aborted) run satisfy the poll instantly and fake a fast round.
-BASE=$(( (($(date +%s) % 86400)) * 100 + 100000000 ))
+# Per-run-unique probe partitions: reusing pids across runs would let leftover rows from an
+# earlier (aborted) run satisfy the poll instantly and fake a fast round. Seeded from the clock
+# AND this shell's pid, so two runs started within the same second still get disjoint bands; each
+# band holds 1000 rounds, and the top stays inside int4.
+if [ "$ROUNDS" -gt 1000 ]; then
+  echo "ROUNDS must be <= 1000 (probe partition bands are 1000 wide)" >&2
+  exit 1
+fi
+BASE="${BASE:-$(( 1000000000 + (((($(date +%s) << 8) ^ $$)) % 1000000) * 1000 ))}"
 lat_ms=()
 for ((i = 0; i < ROUNDS; i++)); do
   pid=$((BASE + i))
