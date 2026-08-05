@@ -3,6 +3,7 @@
 -- (design doc, "Parallelism"). Feed with an extreme skew and compare against a uniform run:
 --   python3 datagen/gen.py --table t_hot --partitions 1000 --rows 500000 \
 --     --hot-count 1 --hot-share 0.9 --abandon-prob 0.3 | make psql
+--   TABLE=t_hot MV=mv_hot ./datagen/seal.sh
 -- vs --hot-count 0. Watch per-partition match arrival lag (max(ts) per partition below) and CPU.
 
 set rw_implicit_flush to true;

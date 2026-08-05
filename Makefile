@@ -91,9 +91,12 @@ endif
 load-setup:
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_bulk.sql
 
+# Feed, then seal. The seal is a separate step because a far-future sentinel delivered while the
+# pipeline is still draining discards the in-flight rows instead of matching them -- see
+# datagen/seal.sh.
 load:
 	$(GEN) $(GENARGS) | $(PSQL) $(PSQLFLAGS) -q
-	@$(PSQL) $(PSQLFLAGS) -c "select count(*) as matches from mv_perf;"
+	@PSQL=$(PSQL) TABLE=t_perf MV=mv_perf ./datagen/seal.sh
 
 rt-setup:
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_realtime.sql

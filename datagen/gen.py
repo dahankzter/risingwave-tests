@@ -115,7 +115,16 @@ def main():
             return "'" + datetime.fromtimestamp(t, timezone.utc).isoformat(sep=" ") + "'"
         return str(tick)
 
-    print("set rw_implicit_flush to true;")
+    if a.mode == "realtime":
+        # Per-statement barrier: the rows have to become visible as they are produced, which is
+        # the point of realtime mode. At a few statements per second the barrier cost is noise.
+        print("set rw_implicit_flush to true;")
+    else:
+        # Bulk mode explicitly does NOT flush per statement. Doing so costs a barrier round trip
+        # per INSERT and caps ingest at roughly 9k rows/s on the rig; without it the same feed
+        # runs at ~88k rows/s, so the per-statement flush -- not the operator -- was what the
+        # throughput numbers measured.
+        print("set rw_implicit_flush to false;")
     while emitted < a.rows:
         for _ in range(a.ties):
             if emitted >= a.rows:
@@ -136,9 +145,18 @@ def main():
         group += 1
     if batch:
         print(f"insert into {a.table} values " + ", ".join(batch) + ";")
-    # Watermark sentinel far past everything (bulk mode; realtime advances by itself).
-    if a.mode == "bulk":
-        print(f"insert into {a.table} values ({a.sentinel_partition}, {tick + 1_000_000}, 'noop', 0{pay_cols});")
+    # No watermark sentinel is emitted here, deliberately: sealing a bulk feed is a separate step
+    # (datagen/seal.sh), because it is only safe once the pipeline has actually drained.
+    #
+    # `flush` returns while the MV is still catching up. Measured on the rig with a 200k-row feed:
+    # immediately after the final flush the MV held 3917 matches, and five seconds later it held
+    # 10624 with nothing further inserted. Sending the far-future sentinel inside that window
+    # froze the MV at 3917 permanently -- the watermark discards the rows still in flight rather
+    # than matching them, and they never come back. An inline sentinel loses ~63% of the matches.
+    #
+    # Bulk mode therefore emits the data only; seal.sh waits for the match count to stop moving
+    # before advancing the watermark. (scenarios/adversarial/backtracking.sql describes the
+    # neighbouring hazard: a sentinel placed too far ahead of rows that have not arrived yet.)
     elapsed = time.time() - started
     note = (f"-- emitted {emitted} rows over {a.partitions} partitions "
             f"(hot: {a.hot_count} @ {a.hot_share if a.hot_count else 0}), "
