@@ -1,0 +1,17 @@
+services:
+  risingwave:
+    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave-mr:v2-PLACEHOLDER}
+    command: single_node
+    ports:
+      - "4566:4566" # SQL (pgwire)
+      - "5690:5690" # meta dashboard
+    volumes:
+      - rw-data:/root/.risingwave
+    healthcheck:
+      test: ["CMD-SHELL", "printf '' /dev/tcp/127.0.0.1/4566 || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  rw-data:
