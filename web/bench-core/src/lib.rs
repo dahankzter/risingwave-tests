@@ -4,6 +4,7 @@
 //! `bench-web` (the demo console), which must both see identical generator behaviour.
 
 pub mod gen;
+pub mod measure;
 pub mod pace;
 pub mod pipeline;
 pub mod run;
