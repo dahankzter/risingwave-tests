@@ -82,6 +82,7 @@ dependencies = [
  "anyhow",
  "bench-core",
  "clap",
+ "time",
  "tokio",
 ]
 

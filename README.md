@@ -75,13 +75,9 @@ aborts at startup (barrier recovery bootstrap crash).
 - `latency/` — decision-latency measurement: `probe.sh` (client-side, polls the MV), `report.sql`
   (server-side, from the proctime stamps every match records for itself), and `bench.sh`, which
   runs the pipeline, the traffic and both measurements in one command.
-- `datagen/gen.py` — the workload generator: partitions, rows, hot-partition skew
-  (`--hot-count/--hot-share`), fraud-shaped event chains with configurable abandonment
-  (`--abandon-prob` — abandoned chains become retained open partials, the interesting state
-  regime under `WITHIN`), payload width (`--payload-cols/--payload-bytes`), tie density
-  (`--ties`), and bulk vs realtime pacing (`--mode realtime --rate N`).
-- `datagen/seal.sh` — advances the watermark past a finished bulk feed, once the pipeline has
-  drained. Not part of the feed itself; see "Sealing a bulk feed" below.
+- `web/` — the Rust workspace. `bench-core` holds workload generation, pacing, the sink
+  abstraction and the seal logic; `bench` is the CLI that `make load` and `make rt-load` drive.
+  Pacing lives in `bench-core/src/pace.rs` and is unit-tested without a database.
 - `expected/` — recorded scenario output. This is what `make smoke` asserts against.
 
 ## Load & latency
@@ -122,7 +118,7 @@ reported ~9.4s p50.
 
 ### Sealing a bulk feed
 
-`gen.py` emits data only. Advancing the watermark is a separate step, because **`flush` returns
+`bench load` emits data only. Advancing the watermark is a separate step, because **`flush` returns
 before the materialized view has caught up** — measured on a 200k-row feed: 3917 matches
 immediately after the final flush, 10624 five seconds later with nothing else inserted. A
 far-future sentinel delivered inside that window froze the count at 3917 permanently: the
@@ -130,7 +126,7 @@ watermark discards the rows still in flight instead of matching them, losing ~63
 and they never come back. Putting a `flush` in front of the sentinel does not help, since `flush`
 is precisely what does not wait.
 
-So `datagen/seal.sh` polls until the match count stops moving, inserts the sentinel, and polls
+So `bench seal` polls until the match count stops moving, inserts the sentinel, and polls
 again. `make load` does both halves. Anything driving a bulk feed by hand must do the same.
 
 Bulk mode also leaves `rw_implicit_flush` off. With it on, every INSERT pays a barrier round trip

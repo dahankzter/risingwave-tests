@@ -38,9 +38,8 @@ say "1/5  building the pipeline"
 "$PSQL" "${FLAGS[@]}" -q -f scenarios/perf/setup_realtime.sql 2>&1 | grep -vE '^(NOTICE|SET|DROP)' || true
 
 say "2/5  starting background load: $ROWS rows at $RATE rows/s (~$((ROWS / RATE))s of traffic)"
-python3 datagen/gen.py --table t_rt --mode realtime --rate "$RATE" --rows "$ROWS" \
-  --partitions "$PARTITIONS" --hot-count 5 --hot-share 0.4 \
-  2>/dev/null | "$PSQL" "${FLAGS[@]}" -q -o /dev/null &
+web/target/release/bench load --table t_rt --mode realtime --rate "$RATE" --rows "$ROWS" \
+  --partitions "$PARTITIONS" --hot-count 5 --hot-share 0.4 &
 load_pid=$!
 # Kill the feed if we exit early, so an aborted run does not leave traffic behind.
 trap 'kill $load_pid 2>/dev/null' EXIT

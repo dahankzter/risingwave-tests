@@ -9,3 +9,4 @@ bench-core = { path = "../bench-core" }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
+time.workspace = true

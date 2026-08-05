@@ -112,7 +112,10 @@ bless:
 # hotspot (one partition dominating). Override any knob: make load PROFILE=fraud ROWS=2000000
 PROFILE ?= small
 ROWS    ?=
-GEN      = python3 datagen/gen.py
+BENCH    = web/target/release/bench
+
+$(BENCH):
+	cd web && cargo build --release
 
 ifeq ($(PROFILE),small)
 GENARGS = --table t_perf --partitions 1000 --rows $(or $(ROWS),100000) --abandon-prob 0.2
@@ -126,20 +129,17 @@ load-setup:
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_bulk.sql
 
 # Feed, then seal. The seal is a separate step because a far-future sentinel delivered while the
-# pipeline is still draining discards the in-flight rows instead of matching them -- see
-# datagen/seal.sh.
-load:
-	$(GEN) $(GENARGS) | $(PSQL) $(PSQLFLAGS) -q
-	@PSQL=$(PSQL) TABLE=t_perf MV=mv_perf ./datagen/seal.sh
+# pipeline is still draining discards the in-flight rows instead of matching them.
+load: $(BENCH)
+	$(BENCH) load $(GENARGS)
+	@$(BENCH) seal --table t_perf --mv mv_perf
 
 rt-setup:
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_realtime.sql
 
-# -o /dev/null: realtime pacing is server-side, so the stream carries one `select pg_sleep(N)` per
-# batch (400 of them at the defaults). Each returns void, which psql renders as a blank one-row
-# table -- pages of apparently empty result sets. Errors still reach stderr.
-rt-load:
-	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q -o /dev/null
+rt-load: $(BENCH)
+	$(BENCH) load --table t_rt --mode realtime --rate $(or $(RATE),2000) \
+		--rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4
 
 # One command for the whole realtime benchmark: build the pipeline, run traffic, take both
 # measurements, print them together. Everything below is the same run done by hand.
