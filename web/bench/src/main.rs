@@ -6,7 +6,7 @@ use anyhow::Result;
 use bench_core::gen::{Config, Generator};
 use bench_core::pipeline::{seal, SealConfig};
 use bench_core::run::{self, RunConfig};
-use bench_core::sink::{Direct, EmitSql, Row, Sink, Ts};
+use bench_core::sink::{Direct, EmitSql, Row, Ts};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]

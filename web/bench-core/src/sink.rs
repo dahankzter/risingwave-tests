@@ -46,13 +46,6 @@ fn quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-pub trait Sink {
-    fn write(&mut self, rows: &[Row]) -> anyhow::Result<()>;
-    fn finish(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
 pub struct EmitSql<W: Write> {
     out: W,
     table: String,
@@ -76,8 +69,8 @@ impl<W: Write> EmitSql<W> {
     }
 }
 
-impl<W: Write> Sink for EmitSql<W> {
-    fn write(&mut self, rows: &[Row]) -> anyhow::Result<()> {
+impl<W: Write> EmitSql<W> {
+    pub fn write(&mut self, rows: &[Row]) -> anyhow::Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -103,7 +96,7 @@ impl<W: Write> Sink for EmitSql<W> {
         Ok(())
     }
 
-    fn finish(&mut self) -> anyhow::Result<()> {
+    pub fn finish(&mut self) -> anyhow::Result<()> {
         self.out.flush()?;
         Ok(())
     }
@@ -188,5 +181,36 @@ impl Direct {
 
         self.client.execute(&sql, &refs).await?;
         Ok(())
+    }
+}
+
+/// The two places rows can go, unified behind one owned value instead of two parallel
+/// `Option`s. `Direct::write_async` is async and `EmitSql::write` is sync (it never does I/O
+/// that would block), so this dispatches rather than being a trait: a trait here would need
+/// `Direct` and `EmitSql` to share one method signature, and the only signature that fits both
+/// is async — which would make every `EmitSql` write pay for an executor it never needs.
+///
+/// The `Emit` variant boxes its writer (`Box<dyn Write + Send>`) instead of the enum taking a
+/// `W: Write` type parameter — a generic enum would push that parameter onto every caller
+/// (`RunConfig`, `RunHandle`, ...) for a path that writes in batches of a few hundred rows at a
+/// time, where one dynamic dispatch per batch is not worth it.
+pub enum Sink {
+    Direct(Direct),
+    Emit(EmitSql<Box<dyn Write + Send>>),
+}
+
+impl Sink {
+    pub async fn write(&mut self, rows: &[Row]) -> anyhow::Result<()> {
+        match self {
+            Sink::Direct(d) => d.write_async(rows).await,
+            Sink::Emit(e) => e.write(rows),
+        }
+    }
+
+    pub async fn finish(&mut self) -> anyhow::Result<()> {
+        match self {
+            Sink::Direct(_) => Ok(()),
+            Sink::Emit(e) => e.finish(),
+        }
     }
 }

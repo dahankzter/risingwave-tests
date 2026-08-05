@@ -6,7 +6,7 @@
 
 use crate::gen::{Config as GenConfig, Generator};
 use crate::pace::Pacer;
-use crate::sink::{Direct, Row, Ts};
+use crate::sink::{Direct, Row, Sink, Ts};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -104,7 +104,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
     let mut g = Generator::new(cfg.gen.clone())?;
     let payload = vec!["x".repeat(cfg.gen.payload_bytes); cfg.gen.payload_cols];
 
-    let mut direct = Direct::connect(&cfg.url, cfg.table.clone(), cfg.gen.payload_cols).await?;
+    let direct = Direct::connect(&cfg.url, cfg.table.clone(), cfg.gen.payload_cols).await?;
     // Realtime wants rows visible as they are produced; bulk does not, and paying a barrier per
     // INSERT there caps ingest near 9k rows/s instead of ~92k.
     let flush = if cfg.realtime { "true" } else { "false" };
@@ -112,6 +112,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
         .client()
         .batch_execute(&format!("set rw_implicit_flush to {flush};"))
         .await?;
+    let mut sink = Sink::Direct(direct);
 
     let rate = Arc::new(AtomicU64::new(cfg.rate.to_bits()));
     let stop = Arc::new(AtomicBool::new(false));
@@ -177,7 +178,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
                 payload: payload.clone(),
             });
             if buf.len() >= batch {
-                direct.write_async(&buf).await?;
+                sink.write(&buf).await?;
                 buf.clear();
                 let _ = tx.send(Progress {
                     rows_sent: i + 1,
@@ -189,8 +190,9 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
             }
         }
         if !buf.is_empty() {
-            direct.write_async(&buf).await?;
+            sink.write(&buf).await?;
         }
+        sink.finish().await?;
         let _ = tx.send(Progress {
             rows_sent: rows,
             rows_target: rows,

@@ -1,5 +1,5 @@
 use bench_core::gen::{Config, Generator, Kind};
-use bench_core::sink::{column_list, EmitSql, Row, Sink, Ts};
+use bench_core::sink::{column_list, EmitSql, Row, Ts};
 
 /// The column list must be explicit. The realtime table carries a generated `proctime()` column
 /// (`ingest_ts`), so a positional INSERT does not line up with the table shape.
