@@ -3,7 +3,6 @@
 //! Pure: no clock of its own beyond the instants callers pass in, and no I/O. The UI's percentiles
 //! are computed here rather than by re-querying latency/report.sql on a timer.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -20,18 +19,20 @@ pub struct Percentiles {
 /// Every latency sample seen this run. The UI's feed is sampled for display, but percentiles
 /// must cover all of them — a percentile over a display sample is not a percentile.
 ///
-/// `sorted` is kept sorted lazily: `push` appends to `raw` and marks `dirty`; `percentiles`
-/// only re-sorts (from `raw` into `sorted`) when `dirty` is set, so a burst of pushes between
-/// two `percentiles()` calls pays for one sort, not one per push. At 250ms UI ticks against
-/// ~500 alerts/s this keeps the cost to at most 4 sorts/s of the whole vector rather than
-/// growing unboundedly worse as the run goes on.
+/// A real consumer must serialise writers behind a `Mutex` regardless (`push` takes `&mut
+/// self`), so `percentiles` also takes `&mut self` through that same guard rather than reaching
+/// for interior mutability — an `Arc<Mutex<Latencies>>` already gives exclusive access, so a
+/// `RefCell` inside it would just add a redundant runtime-borrow-panic path for nothing.
+///
+/// Sorting is lazy: `push` appends and sets `dirty`; `percentiles` sorts the single vector in
+/// place (only when dirty) and clears the flag, so a burst of pushes between two `percentiles()`
+/// calls pays for one sort, not one per push, and there is no second copy of the samples sitting
+/// around.
 #[derive(Debug, Default)]
 pub struct Latencies {
-    raw: Vec<f64>,
-    /// Sorted cache behind interior mutability, so `percentiles` can keep the `&self`
-    /// signature callers expect while still sorting at most once per batch of pushes.
-    sorted: RefCell<Vec<f64>>,
-    dirty: RefCell<bool>,
+    samples: Vec<f64>,
+    dirty: bool,
+    rejected: usize,
 }
 
 impl Latencies {
@@ -39,23 +40,34 @@ impl Latencies {
         Self::default()
     }
 
+    /// Records a latency sample. Non-finite values (NaN, +-inf) are rejected rather than
+    /// stored: `sort_by` with `partial_cmp` is not a total order over NaN, so a single bad
+    /// sample could leave the vector genuinely unsorted and silently corrupt min, max, and every
+    /// percentile. Rejected samples are counted, not just dropped, so the condition is visible.
     pub fn push(&mut self, ms: f64) {
-        self.raw.push(ms);
-        *self.dirty.borrow_mut() = true;
+        if !ms.is_finite() {
+            self.rejected += 1;
+            return;
+        }
+        self.samples.push(ms);
+        self.dirty = true;
     }
 
-    pub fn percentiles(&self) -> Option<Percentiles> {
-        if self.raw.is_empty() {
+    /// Count of samples rejected by `push` for being non-finite.
+    pub fn rejected(&self) -> usize {
+        self.rejected
+    }
+
+    pub fn percentiles(&mut self) -> Option<Percentiles> {
+        if self.samples.is_empty() {
             return None;
         }
-        if *self.dirty.borrow() {
-            let mut sorted = self.sorted.borrow_mut();
-            sorted.clear();
-            sorted.extend_from_slice(&self.raw);
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            *self.dirty.borrow_mut() = false;
+        if self.dirty {
+            self.samples
+                .sort_by(|a, b| a.partial_cmp(b).expect("non-finite values are rejected by push"));
+            self.dirty = false;
         }
-        let v = self.sorted.borrow();
+        let v = &self.samples;
         let pick = |q: f64| -> f64 {
             let idx = ((v.len() - 1) as f64 * q).round() as usize;
             v[idx]
@@ -228,5 +240,23 @@ mod tests {
         assert_eq!(got.p50_ms, pick(0.50));
         assert_eq!(got.p95_ms, pick(0.95));
         assert_eq!(got.p99_ms, pick(0.99));
+    }
+
+    #[test]
+    fn nan_and_infinity_are_rejected_and_do_not_affect_percentiles() {
+        let mut l = Latencies::new();
+        for i in 1..=100 {
+            l.push(i as f64);
+        }
+        l.push(f64::NAN);
+        l.push(f64::INFINITY);
+
+        let p = l.percentiles().unwrap();
+        assert_eq!(p.n, 100, "rejected samples must not be counted");
+        assert_eq!(p.min_ms, 1.0);
+        assert_eq!(p.max_ms, 100.0);
+        assert!((p.p50_ms - 50.0).abs() <= 1.0, "p50 was {}", p.p50_ms);
+        assert!((p.p95_ms - 95.0).abs() <= 1.0, "p95 was {}", p.p95_ms);
+        assert_eq!(l.rejected(), 2);
     }
 }
