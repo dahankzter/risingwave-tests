@@ -108,3 +108,74 @@ impl<W: Write> Sink for EmitSql<W> {
         Ok(())
     }
 }
+
+/// A real connection. Rows are bound as parameters rather than formatted into SQL text.
+pub struct Direct {
+    client: tokio_postgres::Client,
+    table: String,
+    columns: String,
+    payload_cols: usize,
+}
+
+impl Direct {
+    pub async fn connect(
+        url: &str,
+        table: String,
+        payload_cols: usize,
+    ) -> anyhow::Result<Self> {
+        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+        // The connection future drives the protocol and must be polled for the client to work.
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("bench: connection closed: {e}");
+            }
+        });
+        let columns = column_list(payload_cols);
+        Ok(Self { client, table, columns, payload_cols })
+    }
+
+    pub fn client(&self) -> &tokio_postgres::Client {
+        &self.client
+    }
+
+    pub async fn write_async(&mut self, rows: &[Row]) -> anyhow::Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let per_row = 4 + self.payload_cols;
+        let mut sql = format!("insert into {} {} values ", self.table, self.columns);
+        for i in 0..rows.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('(');
+            for c in 0..per_row {
+                if c > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push_str(&format!("${}", i * per_row + c + 1));
+            }
+            sql.push(')');
+        }
+
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> =
+            Vec::with_capacity(rows.len() * per_row);
+        for r in rows {
+            params.push(Box::new(r.partition));
+            match r.ts {
+                Ts::Tick(t) => params.push(Box::new(t as i32)),
+                Ts::Wall(t) => params.push(Box::new(t)),
+            }
+            params.push(Box::new(r.kind.as_str().to_string()));
+            params.push(Box::new(r.amount));
+            for p in &r.payload {
+                params.push(Box::new(p.clone()));
+            }
+        }
+        let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|b| b.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
+
+        self.client.execute(&sql, &refs).await?;
+        Ok(())
+    }
+}
