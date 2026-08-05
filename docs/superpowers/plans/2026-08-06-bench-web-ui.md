@@ -65,7 +65,14 @@ fetch 10 from cur;   -- yields table columns plus `op` and `rw_timestamp`
 
 ---
 
-### Task 1: Extract the run loop into `bench-core`
+### Task 1: Extract the run loop into `bench-core`, and collapse the `Sink` trait
+
+The previous plan's whole-branch review found that `Sink` abstracts nothing — only `EmitSql`
+implements it, because `Direct::write_async` is async and the trait is sync. The cost is a
+duplicated dispatch with an `unreachable!` arm in the CLI. That finding was deferred with the
+ruling "better made when plan 2 needs it". Plan 2 is here, and this task is the consumer, so it is
+due now: replace the trait with an enum whose `write` is async (AFIT is available at rust-version
+1.97), delete the `unreachable!`, and have `run.rs` hold one sink rather than two Options.
 
 The CLI's `main.rs` currently owns the generate-pace-insert loop. The web server cannot drive a loop that lives inside `fn main`, and duplicating it would recreate the divergence this whole port was meant to end.
 
@@ -783,10 +790,14 @@ groups and use them everywhere — no ad-hoc hex values or pixel radii in compon
 Constraints that follow from the setting rather than the spec:
 - `prefers-reduced-motion: reduce` must drop the springs to near-instant. A feed at 20 rows/s with
   spring animation is genuinely unpleasant for a motion-sensitive viewer.
-- Fonts: system stack (`system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif`). Roboto Flex is
-  M3's type face, but fetching it from Google Fonts breaks the no-network rule and embedding a
-  variable font adds ~1.5MB to the binary. Note the deviation in the report; if a colleague wants
-  true Roboto Flex later, embedding it is a self-contained change.
+- Fonts: **embed Roboto Flex**, M3's typeface, as a variable font vendored into
+  `web/bench-web/static/fonts/` and served from the binary via `rust-embed`. Fetch it once at
+  development time and commit it; the running server must never reach the network. ~1.5MB in a
+  locally-run binary is not a cost worth trading typography fidelity for, and a variable font
+  gives the weight axis Expressive's type contrast depends on. Declare it with `@font-face` and
+  `font-display: block`, with the system stack as the fallback family for the moment before it
+  loads. Record the exact source URL and licence (Roboto Flex is SIL OFL 1.1) in the report, and
+  add the licence file next to the font.
 - Contrast: body text and every number a viewer is expected to read must meet WCAG AA (4.5:1)
   against its surface in both schemes. Check the speedometer caption and the feed's dimmed older
   rows specifically — fading old entries is where this usually breaks.
