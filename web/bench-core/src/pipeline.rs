@@ -13,6 +13,10 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct SealConfig {
+    /// `table` and `mv` are interpolated into SQL as identifiers, not bound as parameters —
+    /// PostgreSQL has no parameter binding for identifiers. They are operator-supplied on the
+    /// operator's own cluster, so there is no privilege boundary being crossed here; treat them
+    /// as trusted input and do not plumb untrusted values into them.
     pub table: String,
     pub mv: String,
     pub sentinel_partition: i32,
