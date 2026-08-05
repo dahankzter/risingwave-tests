@@ -1,6 +1,6 @@
 -- EMIT ON WINDOW CLOSE on MATCH_RECOGNIZE is accepted: the operator's output is final-only, so
 -- the clause names behavior it already has (it adds nothing). Queries written for the earlier
--- EOWC-required builds (e.g. the Fraud PoC detectors) must run unchanged.
+-- EOWC-required builds must run unchanged.
 
 set rw_implicit_flush to true;
 set streaming_parallelism = 1;
