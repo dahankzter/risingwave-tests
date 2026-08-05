@@ -55,3 +55,21 @@ fn kinds_are_quoted_as_sql_string_literals() {
     let sql = String::from_utf8(out).unwrap();
     assert!(sql.contains("(1, 10, 'withdraw', 90)"), "got: {sql}");
 }
+
+#[test]
+fn payload_quotes_are_escaped() {
+    let mut out = Vec::new();
+    {
+        let mut sink = EmitSql::new(&mut out, "t".to_string(), 1);
+        sink.write(&[Row {
+            partition: 1,
+            ts: Ts::Tick(10),
+            kind: Kind::Bet,
+            amount: 5,
+            payload: vec!["o'brien".to_string()],
+        }])
+        .unwrap();
+    }
+    let sql = String::from_utf8(out).unwrap();
+    assert!(sql.contains("'o''brien'"), "payload quote not escaped: {sql}");
+}

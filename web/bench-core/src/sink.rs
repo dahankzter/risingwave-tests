@@ -2,7 +2,10 @@
 //!
 //! The generator emits typed `Row`s; only this module turns them into SQL. `Direct` binds them as
 //! parameters against a real connection, `EmitSql` formats them for inspection. Keeping the
-//! generator ignorant of SQL text removes a class of quoting bugs by construction.
+//! generator ignorant of SQL text removes quoting bugs by construction for the generator-controlled
+//! fields (`Kind`, and the numeric fields, which cannot contain a quote). `payload` is a free-form
+//! `Vec<String>`, so its values are not exempt from quoting concerns; they are escaped on the way
+//! out by doubling any single quote, the standard SQL string-literal escape.
 
 use crate::gen::Kind;
 use std::io::Write;
@@ -33,6 +36,14 @@ pub fn column_list(payload_cols: usize) -> String {
     }
     s.push(')');
     s
+}
+
+/// Escape a payload value as a SQL string literal by doubling any single quote, the standard SQL
+/// escape. `Kind` and the numeric fields never need this: they come from a fixed enum and integer
+/// types respectively, but `payload` is free-form and generator-supplied callers can put anything in
+/// it.
+fn quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 pub trait Sink {
@@ -84,7 +95,7 @@ impl<W: Write> Sink for EmitSql<W> {
                 r.amount
             )?;
             for p in &r.payload {
-                write!(self.out, ", '{p}'")?;
+                write!(self.out, ", {}", quote_literal(p))?;
             }
             write!(self.out, ")")?;
         }
