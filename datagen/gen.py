@@ -101,6 +101,7 @@ def main():
     tick = 10
     group = 0
     emitted = 0
+    slept = 0.0     # seconds of pacing already emitted into the stream
     batch = []
     started = time.time()
 
@@ -137,10 +138,16 @@ def main():
                 print(f"insert into {a.table} values " + ", ".join(batch) + ";")
                 batch.clear()
                 if a.mode == "realtime":
-                    # Pace: sleep so cumulative rate approximates --rate.
-                    ahead = emitted / a.rate - (time.time() - started)
-                    if ahead > 0:
-                        print(f"select pg_sleep({ahead:.3f});")
+                    # Pace by accounting, not by this process's clock: the sleeps execute inside
+                    # psql, so generator elapsed time is meaningless here. Using it emitted the
+                    # cumulative target as each sleep (0.25s, 0.50s, 0.75s ...) whenever the
+                    # stream fit in the pipe buffer -- 4000 rows at 2000/s slept 8.97s instead of
+                    # 2s. Emit only the increment not yet slept, so the total is exactly
+                    # rows/rate however fast the generator runs.
+                    target = emitted / a.rate
+                    if target > slept:
+                        print(f"select pg_sleep({target - slept:.3f});")
+                        slept = target
         tick += a.tick_gap
         group += 1
     if batch:
@@ -157,17 +164,15 @@ def main():
     # Bulk mode therefore emits the data only; seal.sh waits for the match count to stop moving
     # before advancing the watermark. (scenarios/adversarial/backtracking.sql describes the
     # neighbouring hazard: a sentinel placed too far ahead of rows that have not arrived yet.)
-    elapsed = time.time() - started
     note = (f"-- emitted {emitted} rows over {a.partitions} partitions "
             f"(hot: {a.hot_count} @ {a.hot_share if a.hot_count else 0}), "
             f"{len(state)} chains left open, ~{int(a.abandon_prob * 100)}% abandon rate")
     if a.mode == "realtime":
-        # Event timestamps follow the ideal --rate schedule. If the consumer could not keep up,
-        # they drift behind wall clock, and rows can land behind a watermark advanced by another
-        # writer using server-side now() (the latency probe does exactly that).
-        note += f", achieved {emitted / elapsed:.0f} rows/s of {a.rate} requested"
-        if elapsed > 1.2 * emitted / a.rate:
-            note += "  [!] consumer could not keep up; lower --rate"
+        # Pacing is server-side: the stream carries a pg_sleep per batch and psql executes them,
+        # so this process cannot observe the ingest rate. Timing generation here would measure the
+        # pipe buffer -- a short run is emitted and exits long before psql has run the sleeps.
+        note += (f", paced at {a.rate} rows/s server-side "
+                 f"(~{emitted / a.rate:.0f}s of traffic once psql has drained it)")
     print(note, file=sys.stderr)
 
 

@@ -132,8 +132,11 @@ load:
 rt-setup:
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_realtime.sql
 
+# -o /dev/null: realtime pacing is server-side, so the stream carries one `select pg_sleep(N)` per
+# batch (400 of them at the defaults). Each returns void, which psql renders as a blank one-row
+# table -- pages of apparently empty result sets. Errors still reach stderr.
 rt-load:
-	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q
+	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q -o /dev/null
 
 latency:
 	PSQL=$(PSQL) ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh
