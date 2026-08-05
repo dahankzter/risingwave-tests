@@ -23,10 +23,13 @@ select * from t_bt match_recognize (
   define a as a.v = 1, b as b.v = 2
 );
 
--- 30 a-rows, no b: every start position explores the optional lattice and fails.
+-- 30 a-rows, no b: every start position explores the optional lattice and fails. The sentinel
+-- sits just above the run (ts 41): it must release the a-rows without advancing the watermark
+-- past the b that arrives at ts 40 next -- a sentinel far in the future would make that b a LATE
+-- row, silently dropped by the WatermarkFilter before it ever reaches the operator.
 insert into t_bt
 select 1, g, 1 from generate_series(10, 39) g;
-insert into t_bt values (9, 100, 0);
+insert into t_bt values (9, 41, 0);
 
 \echo 'expect: 0 rows (no b anywhere), returned promptly'
 select * from mv_bt;

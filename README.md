@@ -11,14 +11,14 @@ work-related lands here, and nothing here references work systems or data.
 ## Usage
 
 ```sh
-make up                # start a single-node RisingWave from $RW_IMAGE (podman)
+make up                # start a single-node RisingWave from $RW_IMAGE (podman run)
 make psql              # interactive session on :4566
 make run S=scenarios/semantics/preference_supersession.sql
 make smoke             # run every scenario under scenarios/semantics/
 make down              # stop; make clean also removes the data volume
 ```
 
-The image is pinned in the `RW_IMAGE` variable (Makefile / compose environment); override per
+The image is pinned in the `RW_IMAGE` variable in the Makefile; override per
 invocation to compare versions:
 
 ```sh
@@ -36,7 +36,7 @@ Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--m
 - `…--mr--231d979--feat-match-recognize-parser` — the earlier EOWC-based architecture (PR #25899),
   useful as a comparison baseline (e.g. the backtracking probe behaves very differently).
 
-The package is public; the images are **linux/amd64 only**. On Apple Silicon the images run emulated (compose pins `platform: linux/amd64`): fine for
+The package is public; the images are **linux/amd64 only**. On Apple Silicon the images run emulated (the Makefile pins `--platform linux/amd64`): fine for
 smoke/semantics runs, not for performance numbers — run `scenarios/perf/` on the Linux rig.
 
 ## Layout
