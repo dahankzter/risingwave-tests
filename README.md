@@ -97,10 +97,22 @@ Measured on the Linux rig (native amd64, 64 cores) against `bee0fbd`:
 | | |
 |---|---|
 | bulk ingest, fraud profile | ~92k rows/s (200k rows, 100k partitions, 100 hot @ 30%, 25% abandoned) |
-| decision latency under 2k rows/s | p50 6448 ms, p95 6676 ms, min 5412 ms (20 rounds) |
+| decision latency, client probe | p50 6448 ms, p95 6676 ms, min 5412 ms (20 rounds @ 2k rows/s) |
+| decision latency, server-side | p50 7334 ms, p95 8243 ms, min 6553 ms (7660 matches @ 2k rows/s) |
 
-The latency figure includes the 5s watermark delay declared on the realtime table, so the
-operator and pipeline account for roughly 1.4s of it. That is the honest end-to-end number an
+There are two latency measurements because they answer different questions. `make latency` runs a
+client probe: insert a chain's completing event, poll the MV until the match shows up. That is
+what a consumer polling the MV feels, but it samples only the rounds it drives. `make lat-setup
+&& make lat-load && make lat-report` instead has the cluster measure itself — a `proctime()`
+column stamps each event on arrival, MATCH_RECOGNIZE carries that stamp out as a measure, and a
+sink into a second `proctime()` table stamps the match on arrival. Every match then stores its own
+delay, so the distribution comes from the whole workload rather than 20 synthetic rounds.
+
+The server-side number reads **higher** because it waits one hop further — across the sink into a
+table, not merely into the MV. The ~0.9s gap between the two is that sink.
+
+Both figures include the 5s watermark delay declared on the realtime table, so the
+operator and pipeline account for roughly 1.4s of the probe number. That is the honest end-to-end number an
 alerting consumer sees; tighten the watermark to trade late-event tolerance for alert speed. For
 reference, the same probe on emulated Apple Silicon reported ~9.4s p50.
 
