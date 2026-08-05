@@ -1,11 +1,11 @@
--- Setup for bulk-mode load runs (integer ticks as event time; datagen supplies the sentinel).
+-- Setup for bulk-mode load runs (integer ticks as event time; the bench CLI supplies the sentinel).
 -- Feed with e.g.:
---   python3 datagen/gen.py --table t_perf --partitions 10000 --rows 1000000 \
---     --hot-count 10 --hot-share 0.5 --abandon-prob 0.2 | make psql
---   TABLE=t_perf MV=mv_perf ./datagen/seal.sh
+--   web/target/release/bench load --table t_perf --partitions 10000 --rows 1000000 \
+--     --hot-count 10 --hot-share 0.5 --abandon-prob 0.2
+--   web/target/release/bench seal --table t_perf --mv mv_perf
 --
 -- The seal is a separate step: a far-future sentinel delivered while the pipeline is still
--- draining discards the rows in flight rather than matching them (see datagen/seal.sh). Or just
+-- draining discards the rows in flight rather than matching them (see `bench seal`). Or just
 -- `make load-setup && make load PROFILE=fraud`, which does both.
 -- Watch: rows-per-second the cluster absorbs, stream_match_recognize_* counters, and idle-load
 -- CPU after the feed stops (that is the per-watermark sweep over retained partials).
@@ -30,4 +30,4 @@ select * from t_perf match_recognize (
   define d as d.kind = 'deposit', b as b.kind = 'bet', w as w.kind = 'withdraw'
 );
 
-\echo 'setup done — feed with datagen/gen.py (see header), then: select count(*) from mv_perf;'
+\echo 'setup done — feed with bench load (see header), then: select count(*) from mv_perf;'
