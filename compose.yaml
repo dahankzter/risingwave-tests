@@ -1,6 +1,9 @@
 services:
   risingwave:
-    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave-mr:v2-PLACEHOLDER}
+    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--0bc2acb--feat-match-recognize-v2}
+    # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
+    # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
+    platform: linux/amd64
     command: single_node
     ports:
       - "4566:4566" # SQL (pgwire)

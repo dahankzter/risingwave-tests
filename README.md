@@ -18,12 +18,26 @@ make smoke             # run every scenario under scenarios/semantics/
 make down              # stop; make clean also removes the data volume
 ```
 
-The image is pinned in the `RW_IMAGE` variable (Makefile / compose environment). Until the next
-image is published it points at a placeholder tag — override per invocation:
+The image is pinned in the `RW_IMAGE` variable (Makefile / compose environment); override per
+invocation to compare versions:
 
 ```sh
-make up RW_IMAGE=ghcr.io/dahankzter/risingwave-mr:0.2.0
+make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-match-recognize-parser
 ```
+
+## Images
+
+Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--mr--<sha>--<branch>`:
+
+- `…--mr--0bc2acb--feat-match-recognize-v2` — the ordered-input architecture (PR #26584), current
+  PR head: review-round fixes, operator metrics, design doc.
+- `…--mr--5e4ef85--feat-match-recognize-v2` — same architecture, before the metrics commit (the
+  `stream_match_recognize_*` counters are absent in this build).
+- `…--mr--231d979--feat-match-recognize-parser` — the earlier EOWC-based architecture (PR #25899),
+  useful as a comparison baseline (e.g. the backtracking probe behaves very differently).
+
+The package is public; the images are **linux/amd64 only**. On Apple Silicon the images run emulated (compose pins `platform: linux/amd64`): fine for
+smoke/semantics runs, not for performance numbers — run `scenarios/perf/` on the Linux rig.
 
 ## Layout
 

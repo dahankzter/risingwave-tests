@@ -1,6 +1,6 @@
 # Test bench for risingwave-mr images. Podman-only (this machine has no docker).
 
-RW_IMAGE ?= ghcr.io/dahankzter/risingwave-mr:v2-PLACEHOLDER
+RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--0bc2acb--feat-match-recognize-v2
 PSQL     ?= /opt/homebrew/opt/libpq/bin/psql
 PSQLFLAGS = -h localhost -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 
