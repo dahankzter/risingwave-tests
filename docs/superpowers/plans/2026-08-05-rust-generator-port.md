@@ -11,7 +11,9 @@
 ## Global Constraints
 
 - Rust edition 2021. Toolchain already present: `cargo 1.97.1`, `rustc 1.97.1`.
-- Workspace lives at `web/`. Nothing outside `web/`, the `Makefile`, and `datagen/` changes in this plan.
+- Workspace lives at `web/`. The only files outside it that change are `Makefile`,
+  `latency/bench.sh`, `README.md`, and the deleted `datagen/gen.py` and `datagen/seal.sh` —
+  all in Task 7, all because they name the Python by path.
 - `make smoke` must pass unchanged after every task. It exercises scenario SQL, not the generator, and is the regression check that this port changed nothing observable.
 - Default connection: `postgres://root@127.0.0.1:4566/dev`. Override with `--url` or `DATABASE_URL`. `PSQLFLAGS` does not apply to the Rust binary.
 - Determinism uses `rand_chacha::ChaCha8Rng::seed_from_u64`, not `StdRng` — `StdRng`'s algorithm is explicitly allowed to change between `rand` releases, which would silently break golden tests.
@@ -776,23 +778,17 @@ impl<W: Write> Sink for EmitSql<W> {
 - [ ] **Step 4: Generate the golden file, then read it before trusting it**
 
 ```bash
-cd web
-mkdir -p bench-core/tests/golden
-cargo test -p bench-core --test golden_sql 2>&1 | head -30
+cd web && mkdir -p bench-core/tests/golden && touch bench-core/tests/golden/bulk_seed42.sql
 ```
 
-The golden test fails because the file does not exist yet. Create it by running a one-off:
+The test now fails on an empty golden file. Capture the real value once: temporarily replace
+`assert_eq!(actual, expected, ...)` with
 
-```bash
-cd web && cat > /tmp/gen_golden.rs <<'EOF'
-// scratch: not committed
-EOF
-cargo test -p bench-core --test golden_sql -- --nocapture 2>&1 | head -5
+```rust
+std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/bulk_seed42.sql"), &actual).unwrap();
 ```
 
-Instead of scripting it, write the file by capturing the assertion's `actual` value: temporarily
-change `assert_eq!(actual, expected, ...)` to `std::fs::write("tests/golden/bulk_seed42.sql", &actual).unwrap();`,
-run the test once, then restore the assertion.
+run `cargo test -p bench-core --test golden_sql`, then restore the assertion.
 
 **Read the generated file before committing it.** It must contain exactly one `insert into t_perf (id, ts, kind, amount) values ...;` line with 20 tuples, ticks 10..29, kinds drawn from `deposit`/`bet`/`withdraw`, and no `p0` columns. A golden file nobody read is not a test.
 
