@@ -77,7 +77,9 @@ aborts at startup (barrier recovery bootstrap crash).
   runs the pipeline, the traffic and both measurements in one command.
 - `web/` — the Rust workspace. `bench-core` holds workload generation, pacing, the sink
   abstraction and the seal logic; `bench` is the CLI that `make load` and `make rt-load` drive.
-  Pacing lives in `bench-core/src/pace.rs` and is unit-tested without a database.
+  Pacing lives in `bench-core/src/pace.rs` and is unit-tested without a database. Dropped from
+  the Python generator it replaces, with no equivalent: `--tick-gap`, `--bets-min`, `--bets-max`,
+  `--sentinel-partition`. Don't go looking for them.
 - `expected/` — recorded scenario output. This is what `make smoke` asserts against.
 
 ## Load & latency

@@ -48,8 +48,6 @@ pub struct Config {
     pub payload_bytes: usize,
     pub seed: u64,
     pub ties: u32,
-    pub tick_gap: i64,
-    pub sentinel_partition: i32,
 }
 
 impl Default for Config {
@@ -66,8 +64,6 @@ impl Default for Config {
             payload_bytes: 32,
             seed: 42,
             ties: 1,
-            tick_gap: 1,
-            sentinel_partition: 0,
         }
     }
 }
@@ -129,10 +125,6 @@ impl Generator {
         cfg.validate()?;
         let rng = ChaCha8Rng::seed_from_u64(cfg.seed);
         Ok(Self { cfg, rng, chains: HashMap::new() })
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.cfg
     }
 
     /// Chains holding a buffered `d b+` prefix with no withdraw yet.

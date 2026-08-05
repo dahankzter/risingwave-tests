@@ -64,6 +64,10 @@ enum Cmd {
         emit_sql: bool,
     },
     /// Settle, advance the watermark, settle again.
+    ///
+    /// Bulk-only: this assumes an integer `ts` column and reads `max(ts)` back as an int4, so
+    /// running it against a realtime table (wall-clock `ts`) fails with an opaque type error.
+    /// Realtime feeds get their watermark from the wall clock and do not need sealing.
     Seal {
         #[arg(long, default_value = "t_perf")]
         table: String,
@@ -91,6 +95,19 @@ async fn main() -> Result<()> {
             ties, seed, rate, payload_cols, payload_bytes, emit_sql,
         } => {
             let realtime = mode == Mode::Realtime;
+
+            // Tie grouping (a shared timestamp across `ties` consecutive rows) is only
+            // implemented for bulk mode's synthetic tick clock. Realtime timestamps are taken
+            // from the wall clock at insert time, one per row, so `--ties` would be silently
+            // ignored there rather than actually grouping anything — exactly the class of bug
+            // this port exists to remove. Reject the combination instead.
+            if realtime && ties > 1 {
+                anyhow::bail!(
+                    "--ties {ties} has no effect in --mode realtime: realtime timestamps are \
+                     taken from the wall clock per row and cannot be grouped; use --mode bulk \
+                     for tie density"
+                );
+            }
 
             // Postgres allows at most MAX_BIND_PARAMS bound parameters per statement, and
             // Direct::write_async binds batch * (4 + payload_cols) of them. Reject a combination
@@ -120,8 +137,6 @@ async fn main() -> Result<()> {
             let mut g = Generator::new(cfg.clone())?;
             let payload = vec!["x".repeat(payload_bytes); payload_cols];
 
-            let pacer = Pacer::new(Instant::now(), rate);
-
             let mut direct = if emit_sql {
                 None
             } else {
@@ -149,6 +164,12 @@ async fn main() -> Result<()> {
             let mut buf: Vec<Row> = Vec::with_capacity(batch);
             let mut tick = 10i64;
             let mut in_group = 0u32;
+
+            // Constructed here, after connection setup (`Direct::connect` and the
+            // `rw_implicit_flush` round trip) rather than before it — otherwise that setup time
+            // becomes schedule backlog and the loop bursts through it at full rate the moment
+            // pacing starts, briefly exceeding the requested rate.
+            let pacer = Pacer::new(Instant::now(), rate);
 
             for i in 0..rows {
                 if realtime {

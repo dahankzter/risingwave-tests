@@ -163,7 +163,18 @@ impl Direct {
         for r in rows {
             params.push(Box::new(r.partition));
             match r.ts {
-                Ts::Tick(t) => params.push(Box::new(t as i32)),
+                Ts::Tick(t) => {
+                    let t32 = i32::try_from(t).map_err(|_| {
+                        anyhow::anyhow!(
+                            "tick {t} does not fit in the `ts` column's int4 type \
+                             (range {}..={}); a bulk feed this long needs a wider `ts` column \
+                             or a lower row count",
+                            i32::MIN,
+                            i32::MAX
+                        )
+                    })?;
+                    params.push(Box::new(t32));
+                }
                 Ts::Wall(t) => params.push(Box::new(t)),
             }
             params.push(Box::new(r.kind.as_str().to_string()));
