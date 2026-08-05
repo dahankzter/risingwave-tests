@@ -10,7 +10,7 @@ PSQLFLAGS = -h localhost -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: up down clean psql run smoke wait logs
+.PHONY: up down clean psql run smoke wait logs load-setup load rt-setup rt-load latency
 
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
@@ -48,3 +48,34 @@ smoke:
 		$(PSQL) $(PSQLFLAGS) -f $$f || exit 1; \
 	done
 	@echo "smoke green"
+
+# ---- Load & latency (real numbers belong on the rig; emulated runs are shape-checks only) ----
+# Profiles: small (laptop shape-check), fraud (per-player keys, mild skew, open partials),
+# hotspot (one partition dominating). Override any knob: make load PROFILE=fraud ROWS=2000000
+PROFILE ?= small
+ROWS    ?=
+GEN      = python3 datagen/gen.py
+
+ifeq ($(PROFILE),small)
+GENARGS = --table t_perf --partitions 1000 --rows $(or $(ROWS),100000) --abandon-prob 0.2
+else ifeq ($(PROFILE),fraud)
+GENARGS = --table t_perf --partitions 100000 --rows $(or $(ROWS),1000000) --hot-count 100 --hot-share 0.3 --abandon-prob 0.25 --ties 2
+else ifeq ($(PROFILE),hotspot)
+GENARGS = --table t_perf --partitions 1000 --rows $(or $(ROWS),500000) --hot-count 1 --hot-share 0.9 --abandon-prob 0.3
+endif
+
+load-setup:
+	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_bulk.sql
+
+load:
+	$(GEN) $(GENARGS) | $(PSQL) $(PSQLFLAGS) -q
+	@$(PSQL) $(PSQLFLAGS) -c "select count(*) as matches from mv_perf;"
+
+rt-setup:
+	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_realtime.sql
+
+rt-load:
+	$(GEN) --table t_rt --mode realtime --rate $(or $(RATE),2000) --rows $(or $(ROWS),200000) --partitions 5000 --hot-count 5 --hot-share 0.4 | $(PSQL) $(PSQLFLAGS) -q
+
+latency:
+	ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh

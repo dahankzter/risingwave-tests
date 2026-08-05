@@ -50,9 +50,31 @@ aborts at startup (barrier recovery bootstrap crash).
   but run against a released image rather than a source build.
 - `scenarios/adversarial/` — patterns designed to hurt: catastrophic-backtracking shapes, scan
   budget probes.
-- `scenarios/perf/` — partition-cardinality sweeps, `WITHIN` retention soak, throughput probes,
-  fed by `datagen/`.
-- `datagen/` — parameterized generators that pipe `INSERT`s through psql.
+- `scenarios/perf/` — load setups: bulk throughput (`setup_bulk.sql`), realtime with wall-clock
+  timestamps (`setup_realtime.sql`), and hot-partition skew (`hot_partition.sql`).
+- `latency/` — the end-to-end decision-latency probe: time from inserting a match's completing
+  event to the alert row appearing in the MV, with p50/p95 over N rounds.
+- `datagen/gen.py` — the workload generator: partitions, rows, hot-partition skew
+  (`--hot-count/--hot-share`), fraud-shaped event chains with configurable abandonment
+  (`--abandon-prob` — abandoned chains become retained open partials, the interesting state
+  regime under `WITHIN`), payload width (`--payload-cols/--payload-bytes`), tie density
+  (`--ties`), and bulk vs realtime pacing (`--mode realtime --rate N`).
+
+## Load & latency
+
+```sh
+make load-setup && make load PROFILE=fraud      # 1M rows, 100k partitions, mild skew, 25% open partials
+make load PROFILE=hotspot                        # one partition takes 90% of traffic
+make rt-setup && make rt-load &                  # realtime background load (wall-clock ts)
+make latency ROUNDS=20                           # p50/p95 insert->alert delay under that load
+```
+
+The latency number includes the watermark delay declared on the table (5s in the realtime setup) —
+that is the honest end-to-end figure an alerting consumer sees, and it is dominated by that
+declared delay: expect roughly `watermark delay + ~1s processing` under continuous traffic.
+Tighten the watermark to trade late-event tolerance for alert speed. Numbers measured on Apple
+Silicon (emulated) are shape-checks only (~9.4s p50 observed where native + real traffic should
+sit near ~6s) — run the same targets on a native amd64 box for real figures.
 
 Scenario scripts are plain psql SQL files. Expected results are stated in comments at the point of
 each query; scripts are written to be re-runnable (they drop and recreate their own objects).
