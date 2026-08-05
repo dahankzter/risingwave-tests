@@ -16,3 +16,4 @@ rand_chacha.workspace = true
 time.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
+tokio-util.workspace = true

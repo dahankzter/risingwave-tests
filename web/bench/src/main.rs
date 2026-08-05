@@ -6,7 +6,7 @@ use anyhow::Result;
 use bench_core::gen::{Config, Generator};
 use bench_core::pipeline::{seal, SealConfig};
 use bench_core::run::{self, RunConfig};
-use bench_core::sink::{Direct, EmitSql, Row, Ts};
+use bench_core::sink::{Direct, EmitSql, Row, Sink, Ts};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -115,8 +115,13 @@ async fn main() -> Result<()> {
 
                 let flush = if realtime { "true" } else { "false" };
                 println!("set rw_implicit_flush to {flush};");
-                let stdout = std::io::stdout();
-                let mut emit = EmitSql::new(stdout.lock(), table.clone(), payload_cols);
+                // `Sink::Emit` needs `Box<dyn Write + Send>`: `StdoutLock` holds a
+                // `ReentrantLockGuard` and is not `Send`, so this uses the unlocked `Stdout`
+                // handle instead (each write re-locks internally, functionally the same
+                // output, just without holding the lock across awaits).
+                let writer: Box<dyn std::io::Write + Send> = Box::new(std::io::stdout());
+                let mut sink =
+                    Sink::Emit(EmitSql::new(writer, table.clone(), payload_cols));
 
                 let mut buf: Vec<Row> = Vec::with_capacity(batch);
                 let mut tick = 10i64;
@@ -143,14 +148,14 @@ async fn main() -> Result<()> {
                         payload: payload.clone(),
                     });
                     if buf.len() >= batch {
-                        emit.write(&buf)?;
+                        sink.write(&buf).await?;
                         buf.clear();
                     }
                 }
                 if !buf.is_empty() {
-                    emit.write(&buf)?;
+                    sink.write(&buf).await?;
                 }
-                emit.finish()?;
+                sink.finish().await?;
                 eprintln!(
                     "-- emitted {rows} rows over {partitions} partitions (hot: {hot_count} @ {hot_share}), \
                      {} chains left open",

@@ -7,10 +7,11 @@
 use crate::gen::{Config as GenConfig, Generator};
 use crate::pace::Pacer;
 use crate::sink::{Direct, Row, Sink, Ts};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 /// Hard limit on bound parameters per statement:
 /// https://www.postgresql.org/docs/current/limits.html
@@ -76,7 +77,7 @@ impl RunConfig {
 
 pub struct RunHandle {
     rate: Arc<AtomicU64>, // f64 bits
-    stop: Arc<AtomicBool>,
+    cancel: CancellationToken,
     progress: watch::Receiver<Progress>,
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
@@ -90,11 +91,27 @@ impl RunHandle {
             self.rate.store(rate.to_bits(), Ordering::Relaxed);
         }
     }
+    /// Requests cancellation. In realtime mode this interrupts the per-row sleep immediately
+    /// rather than waiting for the current batch (up to hundreds of rows, which at a low rate
+    /// can be tens of seconds) to finish — see `wait_until`.
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.cancel.cancel();
     }
     pub async fn join(self) -> anyhow::Result<()> {
         self.task.await?
+    }
+}
+
+/// Waits until `due`, or returns early if `cancel` fires first. `true` means the sleep ran to
+/// completion (the row is due, proceed); `false` means cancellation won the race (stop now).
+///
+/// This is `select!`ed against the sleep rather than checked only at batch boundaries: a batch
+/// can be hundreds of rows, and in realtime mode at a low rate that is tens of seconds of a
+/// "Stop" click appearing to do nothing.
+async fn wait_until(due: Instant, cancel: &CancellationToken) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep_until(due.into()) => true,
+        _ = cancel.cancelled() => false,
     }
 }
 
@@ -115,7 +132,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
     let mut sink = Sink::Direct(direct);
 
     let rate = Arc::new(AtomicU64::new(cfg.rate.to_bits()));
-    let stop = Arc::new(AtomicBool::new(false));
+    let cancel = CancellationToken::new();
     let (tx, rx) = watch::channel(Progress {
         rows_sent: 0,
         rows_target: cfg.gen.rows,
@@ -125,7 +142,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
     });
 
     let rate_for_task = Arc::clone(&rate);
-    let stop_for_task = Arc::clone(&stop);
+    let cancel_for_task = cancel.clone();
     let realtime = cfg.realtime;
     let batch = cfg.batch;
     let rows = cfg.gen.rows;
@@ -136,6 +153,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
         let mut tick = 10i64;
         let mut in_group = 0u32;
         let mut current_rate = cfg.rate;
+        let mut sent: u64 = 0;
 
         // Constructed here, after connection setup (`Direct::connect` and the
         // `rw_implicit_flush` round trip) rather than before it — otherwise that setup time
@@ -144,8 +162,10 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
         let mut pacer = Pacer::new(Instant::now(), current_rate);
 
         for i in 0..rows {
+            // Bulk mode never sleeps, so there is nothing for a per-row select! to interrupt;
+            // a batch-boundary check is cheap enough there and batches are fast regardless.
             if i % batch as u64 == 0 {
-                if stop_for_task.load(Ordering::Relaxed) {
+                if cancel_for_task.is_cancelled() {
                     break;
                 }
                 let new_rate = f64::from_bits(rate_for_task.load(Ordering::Relaxed));
@@ -155,7 +175,11 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
                 }
             }
             if realtime {
-                tokio::time::sleep_until(pacer.due(i).into()).await;
+                // Realtime rows can be tens of seconds apart at a low rate, so cancellation is
+                // raced against the sleep itself rather than checked only between batches.
+                if !wait_until(pacer.due(i), &cancel_for_task).await {
+                    break;
+                }
             }
             let e = g.next_event();
             let ts = if realtime {
@@ -177,11 +201,12 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
                 amount: e.amount,
                 payload: payload.clone(),
             });
+            sent += 1;
             if buf.len() >= batch {
                 sink.write(&buf).await?;
                 buf.clear();
                 let _ = tx.send(Progress {
-                    rows_sent: i + 1,
+                    rows_sent: sent,
                     rows_target: rows,
                     rate_requested: current_rate,
                     open_chains: g.open_chains(),
@@ -189,12 +214,15 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
                 });
             }
         }
+        // Reached whether the loop ran to completion or broke out on cancellation — either way
+        // whatever is buffered still needs to reach the sink. A user-initiated stop is not an
+        // error, so this returns Ok(()) regardless of which path got here.
         if !buf.is_empty() {
             sink.write(&buf).await?;
         }
         sink.finish().await?;
         let _ = tx.send(Progress {
-            rows_sent: rows,
+            rows_sent: sent,
             rows_target: rows,
             rate_requested: current_rate,
             open_chains: g.open_chains(),
@@ -203,7 +231,7 @@ pub async fn start(cfg: RunConfig) -> anyhow::Result<RunHandle> {
         Ok(())
     });
 
-    Ok(RunHandle { rate, stop, progress: rx, task })
+    Ok(RunHandle { rate, cancel, progress: rx, task })
 }
 
 #[cfg(test)]
@@ -257,5 +285,29 @@ mod tests {
         };
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("ties"), "got: {err}");
+    }
+
+    /// The exact bug the fix addresses: a stop must interrupt a sleep in progress, not wait it
+    /// out. `due` is an hour out — if `stop()` were only observed at the next batch boundary
+    /// (the old behaviour), this test would time out; instead `wait_until` must return `false`
+    /// well within the 200ms budget, proving cancellation raced against and won the sleep.
+    #[tokio::test]
+    async fn stop_interrupts_a_realtime_sleep_immediately() {
+        let cancel = CancellationToken::new();
+        let due = Instant::now() + std::time::Duration::from_secs(3600);
+
+        let cancel_for_task = cancel.clone();
+        let handle = tokio::spawn(async move { wait_until(due, &cancel_for_task).await });
+
+        // Give the spawned task a moment to actually start waiting before cancelling it, so the
+        // test proves the sleep is interrupted rather than never having started.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let proceed = tokio::time::timeout(std::time::Duration::from_millis(200), handle)
+            .await
+            .expect("wait_until must return promptly after cancellation, not wait out the sleep")
+            .expect("task must not panic");
+        assert!(!proceed, "wait_until must report cancellation, not a completed sleep");
     }
 }

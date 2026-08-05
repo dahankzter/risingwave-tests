@@ -14,4 +14,5 @@ rand_chacha = "0.3"
 time = { version = "0.3", features = ["formatting", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync"] }
 tokio-postgres = { version = "0.7", features = ["with-time-0_3"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 clap = { version = "4", features = ["derive", "env"] }
