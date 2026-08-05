@@ -14,12 +14,28 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load latency
+.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load latency
+
+# Default target is deliberately inert: a bare `make` should not recreate a running cluster.
+.DEFAULT_GOAL := help
+help:
+	@echo "cluster:  up  down  clean  wait  logs  psql"
+	@echo "tests:    smoke              assert scenarios against expected/"
+	@echo "          bless              re-record expected/"
+	@echo "          run S=path.sql     run one scenario, echoing statements"
+	@echo "load:     load-setup, load PROFILE=small|fraud|hotspot [ROWS=n]"
+	@echo "          rt-setup, rt-load [RATE=n], latency [ROUNDS=n]"
+	@echo
+	@echo "image:    $(RW_IMAGE)"
+	@echo "psql:     $(PSQL)   (override with PSQL=...)"
 
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
+# --replace so `make up` is idempotent: it recreates the container over a leftover one (stopped,
+# or started earlier by compose) instead of failing with "name is already in use". The data volume
+# is untouched, so this costs nothing but a restart -- use `make clean` to actually drop state.
 up:
-	podman run -d --name $(NAME) --platform linux/amd64 \
+	podman run -d --replace --name $(NAME) --platform linux/amd64 \
 		-p 4566:4566 -p 5690:5690 \
 		-v rw-tests-data:/root/.risingwave \
 		$(RW_IMAGE) single_node
