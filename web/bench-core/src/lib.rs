@@ -6,4 +6,5 @@
 pub mod gen;
 pub mod pace;
 pub mod pipeline;
+pub mod run;
 pub mod sink;
