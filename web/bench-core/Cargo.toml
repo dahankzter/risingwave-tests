@@ -1,0 +1,18 @@
+[package]
+name = "bench-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "bench_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true

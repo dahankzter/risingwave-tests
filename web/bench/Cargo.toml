@@ -1,0 +1,11 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bench-core = { path = "../bench-core" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
