@@ -51,11 +51,15 @@ pub struct Reader {
     /// exponential backoff, or giving up loudly after N failures — has something to key off
     /// without re-plumbing the loop.
     consecutive_failures: u32,
+    /// The last log line published, so an unchanged condition can stay quiet (see `fail`).
+    last_report: Option<String>,
+    /// Occurrences of the unchanged condition since it was last reported.
+    since_report: u32,
 }
 
 impl Reader {
     pub fn new() -> Self {
-        Self { phase: Phase::Disconnected, consecutive_failures: 0 }
+        Self { phase: Phase::Disconnected, consecutive_failures: 0, last_report: None, since_report: 0 }
     }
 
     pub fn phase(&self) -> Phase {
@@ -70,18 +74,66 @@ impl Reader {
     pub fn ready(&mut self) {
         self.phase = Phase::Ready;
         self.consecutive_failures = 0;
+        // Forget what was last reported: if the same condition recurs after a healthy stretch,
+        // that is news again.
+        self.last_report = None;
+        self.since_report = 0;
     }
 
     /// Call on any failure — connect, setup, or fetch. Moves back to `Disconnected` so the next
-    /// loop iteration redoes setup from scratch, and returns the `Event::Log` to publish.
-    /// `context` is a short phase name ("connect", "setup", "fetch") for the log line.
-    pub fn fail(&mut self, context: &str, err: &str) -> Event {
+    /// loop iteration redoes setup from scratch, and returns the `Event::Log` to publish, or
+    /// `None` when there is nothing worth saying.
+    ///
+    /// Two things this is careful about, both learned from watching the page rather than the code:
+    ///
+    /// * **A missing pipeline is not a failure.** Before anyone presses "rebuild pipeline" there
+    ///   is no `t_rt_alerts` to subscribe to, so every attempt fails by construction. Reporting
+    ///   that as a warning made a correct, expected state look like a broken engine — and, worse,
+    ///   the repeated warning overwrote the "cluster: up" confirmation in the log strip, so the
+    ///   one action the operator had just taken appeared to have done nothing. It is reported once,
+    ///   as information, in the language of what to do next.
+    /// * **Repetition is silence.** A condition that persists is logged on its first occurrence
+    ///   and then every `REPEAT_EVERY` attempts, not on all of them.
+    pub fn fail(&mut self, context: &str, err: &str) -> Option<Event> {
+        /// Re-report an unchanged condition once per this many occurrences, so a persistent
+        /// problem stays visible without repainting the strip every retry.
+        const REPEAT_EVERY: u32 = 30;
+
         self.phase = Phase::Disconnected;
         self.consecutive_failures += 1;
-        Event::Log {
-            level: "warn".to_string(),
-            text: format!("alert reader: {context} failed ({err}); reconnecting"),
+
+        // The pipeline's objects are created by `rebuild pipeline`; until then their absence is
+        // the expected state, and RisingWave says so with "not found" / "does not exist".
+        //
+        // Scoped to the setup phase deliberately: the same message during `fetch` means the
+        // cursor died under a running reader — the pipeline-rebuild recovery path — which is a
+        // real reconnect and stays a warning.
+        let missing_object = err.contains("not found")
+            || err.contains("does not exist")
+            || err.contains("Catalog error");
+        let (level, text) = if missing_object && context == "connect/setup" {
+            (
+                "info",
+                "alert reader: waiting for the pipeline (press \"rebuild pipeline\")".to_string(),
+            )
+        } else {
+            ("warn", format!("alert reader: {context} failed ({err}); reconnecting"))
+        };
+
+        // Deduplicate on the MESSAGE, not on the failure count: a condition that changed is news
+        // and must be reported immediately, even mid-streak. (Counting instead would have hidden
+        // the first "waiting for the pipeline" behind a preceding fetch failure.)
+        let changed = self.last_report.as_deref() != Some(text.as_str());
+        if changed {
+            self.last_report = Some(text.clone());
+            self.since_report = 0;
+        } else {
+            self.since_report += 1;
+            if self.since_report % REPEAT_EVERY != 0 {
+                return None;
+            }
         }
+        Some(Event::Log { level: level.to_string(), text })
     }
 }
 
@@ -178,10 +230,11 @@ async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
                 }
                 Err(e) => {
                     client = None;
-                    let ev = reader.fail("connect/setup", &e.to_string());
                     // A send error here just means no receiver is listening yet; the reader
                     // keeps going regardless — it must never die on account of the channel.
-                    let _ = tx.send(ev);
+                    if let Some(ev) = reader.fail("connect/setup", &e.to_string()) {
+                        let _ = tx.send(ev);
+                    }
                     tokio::time::sleep(RETRY_SLEEP).await;
                     continue;
                 }
@@ -194,8 +247,10 @@ async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
             // `continue`s — but handled rather than `unwrap`ed/`expect`ed so a future refactor
             // that breaks the invariant degrades to "log and retry" instead of a panic that
             // would take the whole reader down.
-            let ev = reader.fail("invariant", "ready phase reached with no open connection");
-            let _ = tx.send(ev);
+            if let Some(ev) = reader.fail("invariant", "ready phase reached with no open connection")
+            {
+                let _ = tx.send(ev);
+            }
             tokio::time::sleep(RETRY_SLEEP).await;
             continue;
         };
@@ -223,8 +278,9 @@ async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
             }
             Err(e) => {
                 client = None;
-                let ev = reader.fail("fetch", &e.to_string());
-                let _ = tx.send(ev);
+                if let Some(ev) = reader.fail("fetch", &e.to_string()) {
+                    let _ = tx.send(ev);
+                }
                 tokio::time::sleep(RETRY_SLEEP).await;
             }
         }
@@ -251,8 +307,8 @@ mod tests {
     #[test]
     fn ready_moves_to_ready_and_clears_the_failure_count() {
         let mut r = Reader::new();
-        r.fail("connect/setup", "boom");
-        r.fail("connect/setup", "boom again");
+        let _ = r.fail("connect/setup", "boom");
+        let _ = r.fail("connect/setup", "boom again");
         assert_eq!(r.consecutive_failures(), 2);
         r.ready();
         assert_eq!(r.phase(), Phase::Ready);
@@ -264,7 +320,9 @@ mod tests {
         let mut r = Reader::new();
         r.ready();
         assert_eq!(r.phase(), Phase::Ready);
-        let ev = r.fail("fetch", "cursor \"cur_alerts\" does not exist");
+        let ev = r
+            .fail("fetch", "cursor \"cur_alerts\" does not exist")
+            .expect("the first failure of a condition is always reported");
         assert_eq!(r.phase(), Phase::Disconnected);
         match ev {
             Event::Log { level, text } => {
@@ -279,9 +337,9 @@ mod tests {
     #[test]
     fn repeated_failures_without_an_intervening_ready_accumulate() {
         let mut r = Reader::new();
-        r.fail("connect/setup", "e1");
-        r.fail("connect/setup", "e2");
-        r.fail("connect/setup", "e3");
+        let _ = r.fail("connect/setup", "e1");
+        let _ = r.fail("connect/setup", "e2");
+        let _ = r.fail("connect/setup", "e3");
         assert_eq!(r.consecutive_failures(), 3);
         assert_eq!(r.phase(), Phase::Disconnected);
     }
@@ -298,14 +356,24 @@ mod tests {
         r.ready();
         assert_eq!(r.phase(), Phase::Ready);
 
+        // A fetch that fails because the rebuild dropped the objects underneath a READY reader is
+        // a genuine reconnect: warned about, not silently swallowed as "waiting".
         let ev1 = r.fail("fetch", "table or source \"t_rt_alerts\" does not exist");
         assert_eq!(r.phase(), Phase::Disconnected);
-        assert!(matches!(ev1, Event::Log { .. }));
+        assert!(matches!(ev1, Some(Event::Log { level, .. }) if level == "warn"));
 
         // Rebuild still in flight: a couple of connect/setup attempts land before the DDL
-        // finishes.
-        r.fail("connect/setup", "subscription \"sub_alerts\" does not exist");
-        r.fail("connect/setup", "subscription \"sub_alerts\" does not exist");
+        // finishes. These are the expected-absence case, so they report as information (and only
+        // the first of the streak reports at all).
+        let ev2 = r.fail("connect/setup", "subscription \"sub_alerts\" does not exist");
+        assert!(
+            matches!(&ev2, Some(Event::Log { level, text }) if level == "info" && text.contains("rebuild pipeline")),
+            "expected a waiting notice, got {ev2:?}"
+        );
+        assert!(
+            r.fail("connect/setup", "subscription \"sub_alerts\" does not exist").is_none(),
+            "a repeat of the same condition must stay quiet"
+        );
         assert_eq!(r.phase(), Phase::Disconnected);
         assert_eq!(r.consecutive_failures(), 3);
 

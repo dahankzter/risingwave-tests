@@ -734,3 +734,25 @@ input[type='range']::-moz-range-thumb {
   color: var(--m3-error, #b3261e);
   font-weight: 600;
 }
+
+/* Status chips carry their own verdict: a glance at the header answers "is this thing working",
+   which the log strip cannot — it holds one line, and a background message overwrites an action's
+   confirmation moments after it appears. */
+.status-chip[data-state='good'] {
+  background: color-mix(in srgb, var(--md-sys-color-primary) 18%, var(--md-sys-color-surface-container-high));
+  color: var(--md-sys-color-on-surface);
+}
+
+.status-chip[data-state='good'] b {
+  color: var(--md-sys-color-primary);
+}
+
+.status-chip[data-state='bad'] {
+  background: color-mix(in srgb, var(--md-sys-color-error) 16%, var(--md-sys-color-surface-container-high));
+}
+
+.status-chip[data-state='bad'] b {
+  color: var(--md-sys-color-error);
+}
+
+/* 'unknown' keeps the neutral default: an unproven state must not look like a healthy one. */
