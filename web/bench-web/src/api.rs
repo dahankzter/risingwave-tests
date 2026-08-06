@@ -248,11 +248,12 @@ async fn load_rate(State(state): State<Arc<AppState>>, Json(req): Json<RateReque
 /// dependency error unless the subscription is dropped first. This handler therefore, in order:
 /// 1. stops any running load (so nothing is writing to `t_rt` mid-rebuild),
 /// 2. drops `sub_alerts` explicitly,
-/// 3. runs `setup_realtime.sql`,
-/// and then returns — it does *not* recreate the subscription itself. `stream.rs`'s reader
-/// notices its next `fetch` fails (the subscription is gone), falls back to `Phase::Disconnected`,
-/// and re-declares both subscription and cursor on its own retry loop. Recreating it here too
-/// would race the reader's retry.
+/// 3. runs `setup_realtime.sql`.
+///
+/// It then returns — it does *not* recreate the subscription itself. `stream.rs`'s reader notices
+/// its next `fetch` fails (the subscription is gone), falls back to `Phase::Disconnected`, and
+/// re-declares both subscription and cursor on its own retry loop. Recreating it here too would
+/// race the reader's retry.
 async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
     {
         let mut guard = state.run.lock().await;

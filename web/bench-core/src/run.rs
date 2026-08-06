@@ -257,8 +257,7 @@ mod tests {
     #[test]
     fn rejects_a_batch_that_would_exceed_the_bound_parameter_limit() {
         // Direct::write_async binds batch * (4 + payload_cols) parameters; Postgres allows 65535.
-        let mut gen = crate::gen::Config::default();
-        gen.payload_cols = 4;
+        let gen = crate::gen::Config { payload_cols: 4, ..Default::default() };
         let cfg = RunConfig {
             table: "t".into(),
             url: "postgres://x".into(),
@@ -273,8 +272,7 @@ mod tests {
 
     #[test]
     fn realtime_rejects_tie_density() {
-        let mut gen = crate::gen::Config::default();
-        gen.ties = 2;
+        let gen = crate::gen::Config { ties: 2, ..Default::default() };
         let cfg = RunConfig {
             table: "t".into(),
             url: "postgres://x".into(),

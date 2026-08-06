@@ -65,7 +65,9 @@ pub fn usable_cores() -> usize {
     if let Some(n) = cgroup_quota_cores() {
         return n;
     }
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// `cpu.max` is `"$MAX $PERIOD"`, where `$MAX` is `"max"` when unlimited. Quota/period rounded
@@ -113,7 +115,10 @@ pub fn apply_to_self(layout: &Layout) -> anyhow::Result<()> {
         )
     };
     if rc != 0 {
-        anyhow::bail!("sched_setaffinity failed: {}", std::io::Error::last_os_error());
+        anyhow::bail!(
+            "sched_setaffinity failed: {}",
+            std::io::Error::last_os_error()
+        );
     }
     Ok(())
 }
