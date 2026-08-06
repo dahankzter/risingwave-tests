@@ -24,10 +24,12 @@ struct Cli {
     #[arg(long, default_value = DEFAULT_NAME)]
     container_name: String,
 
-    /// Where `POST /api/pipeline/rebuild` finds the realtime pipeline's setup SQL. Defaults to
-    /// the repo layout when run as `cd web && cargo run -p bench-web`.
-    #[arg(long, default_value = "../scenarios/perf/setup_realtime.sql")]
-    pipeline_sql: PathBuf,
+    /// Override for where `POST /api/pipeline/rebuild` finds the realtime pipeline's setup SQL.
+    /// Unset by default: the server uses the copy embedded into the binary at compile time, so it
+    /// works identically regardless of the process's current directory. Pass this to point at a
+    /// file on disk instead — e.g. to iterate on the SQL without rebuilding the binary.
+    #[arg(long)]
+    pipeline_sql: Option<PathBuf>,
 }
 
 #[tokio::main]

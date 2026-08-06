@@ -41,6 +41,17 @@
 
 set rw_implicit_flush to true;
 
+-- The console's alert reader (bench-web/src/stream.rs) holds a subscription on t_rt_alerts, which
+-- blocks `drop table t_rt_alerts` below with a dependency error; under `set -e`-style scripts
+-- (ON_ERROR_STOP=1 here) that aborts the whole run before the sink is ever (re)created, leaving
+-- t_rt/mv_rt still accumulating while t_rt_alerts silently stops moving. Drop it unconditionally
+-- first: the reader notices its next `fetch` fail, falls back to `Phase::Disconnected`, and
+-- re-declares both subscription and cursor on its own retry loop (see stream.rs), so this is safe
+-- to run whether or not the console is up.
+drop subscription if exists sub_alerts;
+-- Stale sink from the pre-collapse pipeline shape; still resident on this cluster and not part of
+-- the current setup, so clean it up here rather than leaving it to accumulate.
+drop sink if exists lat_feed;
 drop sink if exists rt_feed;
 drop table if exists t_rt_alerts;
 drop materialized view if exists mv_rt;

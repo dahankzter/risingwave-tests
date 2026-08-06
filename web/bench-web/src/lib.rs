@@ -4,9 +4,12 @@
 
 pub mod api;
 pub mod assets;
+pub mod embedded;
 pub mod event;
 pub mod podman;
+pub mod probe;
 pub mod state;
+pub mod status;
 pub mod stream;
 pub mod ws;
 
@@ -29,11 +32,7 @@ pub fn app_router(state: Arc<AppState>) -> Router {
 /// `tests/api.rs`. Every assertion those tests make is reached before any handler touches the
 /// cluster driver or opens a connection, so the placeholder `db_url` is never dialed.
 pub fn router_for_test() -> Router {
-    let state = Arc::new(AppState::new(
-        Arc::new(NullCluster),
-        "postgres://unused/unused".to_string(),
-        PathBuf::from("unused.sql"),
-    ));
+    let state = Arc::new(AppState::new(Arc::new(NullCluster), "postgres://unused/unused".to_string(), None));
     app_router(state)
 }
 
@@ -62,7 +61,10 @@ pub struct ServeConfig {
     pub db_url: String,
     pub container_name: String,
     pub image: String,
-    pub pipeline_sql: PathBuf,
+    /// `None` means use the SQL embedded into the binary at compile time (`embedded::setup_sql`)
+    /// — CWD-independent. `Some` is an explicit override, e.g. to iterate on the SQL on disk
+    /// without a rebuild.
+    pub pipeline_sql: Option<PathBuf>,
 }
 
 /// Starts the alert reader, builds the router, and serves it at `cfg.bind` until the process is
@@ -77,6 +79,7 @@ pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
 
     let _reader = stream::spawn_reader(cfg.db_url, state.tx.clone());
     let _aggregator = ws::spawn_aggregator(state.clone());
+    let _status_poller = status::spawn_status_poller(state.clone());
 
     let router = app_router(state);
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;

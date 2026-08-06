@@ -32,6 +32,13 @@ export function wireControls(dom, api, showMessage) {
   );
   dom.btnLoadStop.addEventListener('click', disableWhile(dom.btnLoadStop, api.loadStop));
 
+  // Fixed at 3 rounds — enough to see a p50/p95 without a long wait; results stream back over
+  // the socket as `probe` events (see state.js), not in this call's response.
+  dom.btnProbeStart.addEventListener(
+    'click',
+    disableWhile(dom.btnProbeStart, () => api.probeStart(3)),
+  );
+
   // Live: the slider posts on every change, throttled to animation frames so a drag doesn't
   // flood the endpoint with one request per pixel of mouse movement.
   let rateRequestPending = false;

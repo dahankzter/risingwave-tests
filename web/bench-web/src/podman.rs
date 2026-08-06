@@ -37,6 +37,11 @@ pub trait Cluster: Send + Sync {
     /// on the assumption the caller already checked. Keeping the token check in the HTTP layer
     /// rather than here means this trait never needs to know about request bodies.
     fn clean(&self) -> BoxFuture<'_, anyhow::Result<()>>;
+    /// Asks podman directly whether the container is running — used by the status poller (see
+    /// `status.rs`) so `/api/status` reflects reality instead of "whatever the last action taken
+    /// through this API implied." A missing container (never started, or removed) is `Ok(false)`,
+    /// not an error: that is the ordinary pre-`up` state, not a failure to report.
+    fn is_running(&self) -> BoxFuture<'_, anyhow::Result<bool>>;
 }
 
 /// The real driver: shells out to `podman`.
@@ -134,6 +139,24 @@ impl Cluster for PodmanDriver {
             Ok(())
         })
     }
+
+    fn is_running(&self) -> BoxFuture<'_, anyhow::Result<bool>> {
+        Box::pin(async move {
+            let output = Command::new("podman")
+                .args(["inspect", "-f", "{{.State.Running}}", &self.name])
+                .stdin(Stdio::null())
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to spawn podman: {e}"))?;
+            if !output.status.success() {
+                // No such container (the common case before `cluster up` is ever called, or after
+                // `cluster down`/`clean`) is not an error here — it just means "not running".
+                return Ok(false);
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(stdout.trim() == "true")
+        })
+    }
 }
 
 /// A no-op driver for `router_for_test()`. Every method succeeds instantly and touches nothing —
@@ -150,5 +173,8 @@ impl Cluster for NullCluster {
     }
     fn clean(&self) -> BoxFuture<'_, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
+    }
+    fn is_running(&self) -> BoxFuture<'_, anyhow::Result<bool>> {
+        Box::pin(async { Ok(false) })
     }
 }

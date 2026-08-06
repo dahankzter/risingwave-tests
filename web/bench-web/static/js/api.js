@@ -25,6 +25,7 @@ export const pipelineRebuild = () => post('/api/pipeline/rebuild');
 export const loadStart = (overrides = {}) => post('/api/load/start', overrides);
 export const loadStop = () => post('/api/load/stop');
 export const loadRate = (rate) => post('/api/load/rate', { rate });
+export const probeStart = (rounds) => post('/api/probe/start', { rounds });
 
 export async function getStatus() {
   try {

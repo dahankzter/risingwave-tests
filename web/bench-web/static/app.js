@@ -41,6 +41,7 @@ const dom = {
   btnPipelineRebuild: document.getElementById('btn-pipeline-rebuild'),
   btnLoadStart: document.getElementById('btn-load-start'),
   btnLoadStop: document.getElementById('btn-load-stop'),
+  btnProbeStart: document.getElementById('btn-probe-start'),
   rateSlider: document.getElementById('rate-slider'),
   rateValue: document.getElementById('rate-value'),
   btnCleanOpen: document.getElementById('btn-cluster-clean'),
@@ -97,6 +98,13 @@ store.addEventListener('metrics', () =>
 );
 
 store.addEventListener('log', () => renderLog(dom.logStrip, store.lastLog));
+
+// `probe` events (POST /api/probe/start's per-round results) have no dedicated card — the log
+// strip is the one place on the page for "here is what just happened," same as showMessage below.
+store.addEventListener('probe', (ev) => {
+  const { round, latencyMs } = ev.detail;
+  renderLog(dom.logStrip, { level: 'info', text: `probe round ${round}: ${latencyMs} ms` });
+});
 
 // A locally-originated message (a control call's result, including errors like "409 a load is
 // already running") reuses the same log strip, since it is the one place on the page dedicated

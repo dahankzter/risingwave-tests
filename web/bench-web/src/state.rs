@@ -48,9 +48,15 @@ pub struct AppState {
     /// The live cluster's connection string. Used both to start a load and to open the dedicated
     /// connection `pipeline/rebuild` needs for the subscription drop and the setup SQL.
     pub db_url: String,
-    /// Where `pipeline/rebuild` finds `setup_realtime.sql`. A path rather than a hardcoded
-    /// literal so it can point at a fixture in tests without touching the real scenario file.
-    pub pipeline_sql: PathBuf,
+    /// Override for where `pipeline/rebuild` finds `setup_realtime.sql`. `None` (the default) means
+    /// use the copy embedded into the binary at compile time (see `embedded.rs`) — CWD-independent,
+    /// so the server behaves the same whether it is launched from `web/` or the repo root. `Some`
+    /// lets a caller point at a fixture in tests, or edit the SQL on disk without a rebuild.
+    pub pipeline_sql: Option<PathBuf>,
+    /// One probe at a time, mirroring `run`'s single-load discipline. Not held across the probe's
+    /// own execution (that runs as a detached task) — only across the check-and-set at the start
+    /// and the clear at the end, so it never blocks anything else.
+    pub probe_running: tokio::sync::Mutex<bool>,
     /// Ring buffer of the last `RECENT_CAPACITY` `Event::Alert`s, kept for `ws.rs`'s
     /// `Event::Snapshot` so a client that connects mid-run sees recent activity immediately
     /// instead of an empty screen until the next alert. Maintained by `ws::spawn_aggregator`,
@@ -61,7 +67,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(cluster: Arc<dyn Cluster>, db_url: String, pipeline_sql: PathBuf) -> Self {
+    pub fn new(cluster: Arc<dyn Cluster>, db_url: String, pipeline_sql: Option<PathBuf>) -> Self {
         let (tx, _rx) = broadcast::channel(1024);
         Self {
             run: tokio::sync::Mutex::new(None),
@@ -70,6 +76,7 @@ impl AppState {
             cluster,
             db_url,
             pipeline_sql,
+            probe_running: tokio::sync::Mutex::new(false),
             recent: Mutex::new(VecDeque::with_capacity(RECENT_CAPACITY)),
             last_stats: Mutex::new(None),
         }

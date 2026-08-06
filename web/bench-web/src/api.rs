@@ -27,6 +27,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/load/stop", post(load_stop))
         .route("/api/load/rate", post(load_rate))
         .route("/api/pipeline/rebuild", post(pipeline_rebuild))
+        .route("/api/probe/start", post(probe_start))
 }
 
 fn err(code: StatusCode, msg: impl Into<String>) -> Response {
@@ -277,7 +278,18 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("pipeline/rebuild: drop subscription: {e}"));
     }
 
-    if let Err(e) = bench_core::pipeline::run_sql_file(&client, &state.pipeline_sql).await {
+    // `state.pipeline_sql` is only `Some` when `--setup-sql` overrode the default; otherwise use
+    // the copy embedded into the binary at compile time (see `embedded.rs`) so this handler works
+    // identically regardless of the server's current directory.
+    let sql_result = match &state.pipeline_sql {
+        Some(path) => bench_core::pipeline::run_sql_file(&client, path).await,
+        None => {
+            let sql = crate::embedded::setup_sql();
+            let cleaned = crate::embedded::strip_psql_meta_commands(&sql);
+            client.batch_execute(&cleaned).await.map_err(anyhow::Error::from)
+        }
+    };
+    if let Err(e) = sql_result {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("pipeline/rebuild: setup sql: {e}"));
     }
 
@@ -286,5 +298,43 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
         level: "info".to_string(),
         text: "pipeline: rebuilt; alert reader will reconnect".to_string(),
     });
+    StatusCode::OK.into_response()
+}
+
+// ---- probe ------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ProbeRequest {
+    rounds: u32,
+}
+
+/// Starts a `latency/probe.sh` run (see `probe.rs`). Same single-run discipline as `load/start`:
+/// 409 if a probe is already in flight, rather than queuing a second one. Runs detached — this
+/// handler returns as soon as the run is accepted, and results stream back as `Event::Probe`
+/// (one per round) and a final `Event::Log` over the WebSocket, not in this response.
+async fn probe_start(State(state): State<Arc<AppState>>, Json(req): Json<ProbeRequest>) -> Response {
+    if req.rounds == 0 {
+        return err(StatusCode::BAD_REQUEST, "rounds must be positive");
+    }
+
+    {
+        let mut guard = state.probe_running.lock().await;
+        if *guard {
+            return err(StatusCode::CONFLICT, "a probe is already running");
+        }
+        *guard = true;
+    }
+
+    // SENTINEL=off whenever a load is running — see `probe::sentinel_for`'s doc comment for why:
+    // left on, the probe's own watermark-advancing rows release the load's matches early and
+    // corrupt whatever the load's own measurement is reporting.
+    let load_running = {
+        let guard = state.run.lock().await;
+        guard.as_ref().map(|handle| !handle.progress().borrow().done).unwrap_or(false)
+    };
+    let sentinel = crate::probe::sentinel_for(load_running);
+
+    tokio::spawn(crate::probe::run_probe(state.clone(), req.rounds, sentinel));
+
     StatusCode::OK.into_response()
 }
