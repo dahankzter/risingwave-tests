@@ -114,16 +114,17 @@ The top bar also carries two demo levers:
   is a policy dial, not an engine limit" into something you can show rather than assert. The
   server refuses the rebuild if it cannot find the declaration to rewrite, rather than reporting a
   lateness the pipeline does not actually have.
-- **probe** — the client-side latency measurement: drives a few chains of its own through the
+- **time 3 test alerts** — the client-side latency measurement: drives a few chains of its own through the
   pipeline and times each one from the completing insert to the match being visible in `mv_rt`,
   reporting per-round figures and a p50/p95. It measures the same thing the feed's latency column
   does, but on a chain it controls and through the query a consumer would run — two independent
   measurements that agree are worth more than either alone. While a load is running it suppresses
   its watermark sentinels, because those carry `now()` and would release the load's own matches
   early (on the rig that inflated a feed's apparent speed from 7.2s to 3.4s).
-- **scenario** — run any of the embedded semantics scenarios and read its transcript, including
-  the scenario's own `\echo` expectations, so the panel reads as "expected X, got Y". The
-  correctness half of a demo, next to the throughput half.
+- **correctness check** — run any of the embedded semantics scenarios and read its transcript:
+  each query with its column headers and the rows this cluster returned, directly under the
+  scenario's own expectation line (`-- expect: …`). The correctness half of a demo, next to the
+  throughput half.
 
 The button order matters: **cluster up → rebuild pipeline → start load**. Starting a load before
 the pipeline exists is refused with an explanation rather than accepted — a load writing to a

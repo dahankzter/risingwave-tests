@@ -581,9 +581,17 @@ async fn scenario_run(
                     match client.query(&stmt, &[]).await {
                         Ok(rows) if rows.is_empty() => output.push("(0 rows)".to_string()),
                         Ok(rows) => {
+                            // Header first: `1 | NULL | 3` is unreadable without knowing which
+                            // column is which, and a scenario's whole point is the values it
+                            // asserts.
+                            let names: Vec<&str> =
+                                rows[0].columns().iter().map(|c| c.name()).collect();
+                            output.push(names.join(" | "));
+                            output.push(names.iter().map(|n| "-".repeat(n.len())).collect::<Vec<_>>().join("-+-"));
                             for row in &rows {
                                 output.push(format_row(row));
                             }
+                            output.push(format!("({} row{})", rows.len(), if rows.len() == 1 { "" } else { "s" }));
                         }
                         Err(e) => {
                             ok = false;
@@ -654,19 +662,17 @@ fn format_row(row: &tokio_postgres::Row) -> String {
             Type::INT8 => row.try_get::<_, Option<i64>>(i).ok()??.to_string(),
             Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).ok()??.to_string(),
             Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).ok()??.to_string(),
-            Type::TIMESTAMPTZ | Type::TIMESTAMP => {
+            // `timestamp` and `timestamptz` are DIFFERENT Rust types in the `time` mapping:
+            // `PrimitiveDateTime` and `OffsetDateTime`. Reading both as `OffsetDateTime` fails on
+            // the former, and the failure surfaced as `NULL` — a transcript claiming the scenario
+            // produced no timestamp when it produced one.
+            Type::TIMESTAMPTZ => {
                 let ts = row.try_get::<_, Option<time::OffsetDateTime>>(i).ok()??;
-                // Seconds are enough: these transcripts are read for values, not for sub-second
-                // ordering, and a full RFC3339 stamp per column makes a row unreadable.
-                format!(
-                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                    ts.year(),
-                    u8::from(ts.month()),
-                    ts.day(),
-                    ts.hour(),
-                    ts.minute(),
-                    ts.second()
-                )
+                fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
+            }
+            Type::TIMESTAMP => {
+                let ts = row.try_get::<_, Option<time::PrimitiveDateTime>>(i).ok()??;
+                fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
             }
             _ => row.try_get::<_, Option<String>>(i).ok()??,
         })
@@ -676,6 +682,12 @@ fn format_row(row: &tokio_postgres::Row) -> String {
         .map(|i| cell(row, i).unwrap_or_else(|| "NULL".to_string()))
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+/// Seconds are enough: transcripts are read for values, not sub-second ordering, and a full
+/// RFC3339 stamp per column makes a row unreadable.
+fn fmt_datetime(y: i32, mo: u8, d: u8, h: u8, mi: u8, s: u8) -> String {
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
 fn first_words(stmt: &str) -> String {

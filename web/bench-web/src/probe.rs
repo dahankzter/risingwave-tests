@@ -39,7 +39,10 @@ pub fn sentinel_for(load_running: bool) -> &'static str {
 pub async fn run_probe(state: Arc<AppState>, rounds: u32, sentinel: &'static str) {
     state.publish(Event::Log {
         level: "info".to_string(),
-        text: format!("probe: starting {rounds} round(s) (sentinel={sentinel})"),
+        text: format!(
+            "timing {rounds} test alert(s) end to end{}",
+            if sentinel == "off" { " (using the load's own traffic to advance the watermark)" } else { "" }
+        ),
     });
 
     if let Err(e) = execute(&state, rounds, sentinel).await {
@@ -145,7 +148,7 @@ async fn execute(state: &Arc<AppState>, rounds: u32, sentinel: &'static str) -> 
     state.publish(Event::Log {
         level: "info".to_string(),
         text: format!(
-            "probe: {} round(s) — p50 {}ms p95 {}ms min {}ms max {}ms (sentinel={sentinel})",
+            "timed {} test alert(s): p50 {}ms, p95 {}ms, fastest {}ms, slowest {}ms",
             samples.len(),
             pick(0.5),
             pick(0.95),

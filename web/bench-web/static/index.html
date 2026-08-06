@@ -49,15 +49,19 @@
 
       <span class="divider" aria-hidden="true"></span>
 
-      <button id="btn-probe-start" class="btn btn--tonal" type="button">probe (3 rounds)</button>
+      <!-- Named for what it does, not for what the code calls it: "probe" told a viewer nothing. -->
+      <button id="btn-probe-start" class="btn btn--tonal" type="button"
+              title="Sends 3 test chains through the pipeline and times each one from the completing event to the alert appearing — an independent check of the latency column, measured through the query a consumer would run.">
+        time 3 test alerts
+      </button>
 
       <span class="divider" aria-hidden="true"></span>
 
-      <label class="select-control">
-        scenario
+      <label class="select-control" title="Run a correctness scenario against this cluster and read its transcript: each query with the rows it returned, next to what the scenario expected.">
+        correctness check
         <select id="scenario-select"><option value="">loading&hellip;</option></select>
       </label>
-      <button id="btn-scenario-run" class="btn btn--tonal" type="button">run</button>
+      <button id="btn-scenario-run" class="btn btn--tonal" type="button">run check</button>
       <button id="btn-details" class="btn btn--tonal" type="button" aria-expanded="false" aria-controls="details-panel">details</button>
 
       <span class="divider" aria-hidden="true"></span>
@@ -123,9 +127,13 @@
 
   <section id="scenario-panel" class="scenario" hidden aria-label="scenario transcript">
     <div class="scenario__head">
-      <h2 id="scenario-title" class="scenario__title">scenario</h2>
+      <h2 id="scenario-title" class="scenario__title">correctness check</h2>
       <button id="btn-scenario-close" class="btn btn--outlined" type="button">close</button>
     </div>
+    <p class="scenario__hint">
+      Lines beginning <code>--</code> are the scenario's own expectations; the rows beneath each
+      are what this cluster actually returned.
+    </p>
     <pre id="scenario-output" class="scenario__output"></pre>
   </section>
 

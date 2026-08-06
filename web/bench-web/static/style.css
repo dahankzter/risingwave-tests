@@ -940,3 +940,14 @@ input[type='range']::-moz-range-thumb {
 .status-chip[data-state='pending'] b {
   color: #f59e0b;
 }
+
+/* How to read a transcript, stated once above it rather than assumed. */
+.scenario__hint {
+  margin: 0 0 8px;
+  font-size: var(--md-sys-typescale-body-small-size, 0.75rem);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.scenario__hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
