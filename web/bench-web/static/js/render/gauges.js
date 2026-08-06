@@ -20,8 +20,8 @@ const CY = 60;
  * second is unreadable. This snaps the full-scale value to a 1/2/5 x 10^n ladder, and only when
  * the reading would otherwise leave the dial (or sits under a fifth of it), so the scale holds
  * still while the needle moves. */
-export function niceScale(observed, requested = 0) {
-  const need = Math.max(observed, requested, 1);
+export function niceScale(observed, requested = 0, minScale = 1) {
+  const need = Math.max(observed, requested, minScale);
   const ladder = [1, 2, 5];
   let mag = 1;
   while (mag < 1e9) {
@@ -67,7 +67,8 @@ function buildDial(host, { ticks = 6 } = {}) {
   });
 
   svg.append(svgEl('path', { d: arcPath(0, 1, R), class: 'dial__track' }));
-  const value = svgEl('path', { d: arcPath(0, 0, R), class: 'dial__value' });
+  // Empty, not a zero-length arc: the latter paints its round cap as a dot at the zero mark.
+  const value = svgEl('path', { d: '', class: 'dial__value' });
   svg.append(value);
 
   const tickGroup = svgEl('g', { class: 'dial__ticks' });
@@ -108,10 +109,26 @@ function drawTicks(dial, scale) {
   }
 }
 
+/// The needle is drawn pointing straight up from the hub, which in this coordinate convention
+/// (0° = +x, y growing downward) is 270°. So reaching dial angle `θ` is a rotation of `θ - 270`:
+/// -120° at zero (lower left), 0° at half scale (straight up), +120° at full (lower right).
+/// Rotating by `θ` itself — the obvious-looking arithmetic — parks the zero reading at the
+/// lower RIGHT, i.e. at what looks like full scale.
+const NEEDLE_REST_DEG = 270;
+
 function updateNeedle(dial, frac) {
-  const deg = fracToDeg(frac) + 90; // the needle path points "up" at 0°
-  dial.needle.setAttribute('transform', `rotate(${deg - 90} ${CX} ${CY})`);
-  dial.value.setAttribute('d', arcPath(0, frac, R));
+  const clamped = Math.min(1, Math.max(0, frac));
+  dial.needle.setAttribute(
+    'transform',
+    `rotate(${fracToDeg(clamped) - NEEDLE_REST_DEG} ${CX} ${CY})`,
+  );
+  // A zero-length arc still paints its round line cap — a stray dot sitting at the zero mark, on
+  // an idle dial, which reads as a value. Hide the arc instead until it has length to draw.
+  if (clamped <= 0.001) {
+    dial.value.setAttribute('d', '');
+  } else {
+    dial.value.setAttribute('d', arcPath(0, clamped, R));
+  }
 }
 
 function updateTarget(dial, frac) {
@@ -148,7 +165,9 @@ export function renderRowsGauge(els, rate) {
 
   if (!dialEl) return;
   const dial = dialFor(dialEl, { ticks: 6 });
-  const scale = niceScale(observed, requested);
+  // A floor on the scale so an idle dial reads a plausible range (0–1,000/s) instead of 0–2,
+  // which looks like a broken instrument rather than a resting one.
+  const scale = niceScale(observed, requested, 1000);
   drawTicks(dial, scale);
   updateNeedle(dial, observed / scale);
   updateTarget(dial, requested > 0 ? requested / scale : null);
@@ -166,7 +185,9 @@ export function renderAlertsGauge(els, rate) {
 
   if (!dialEl) return;
   const dial = dialFor(dialEl, { ticks: 6 });
-  const scale = niceScale(observed);
+  // Alerts are a fraction of rows by construction (one per matched chain), so its resting range
+  // is an order of magnitude smaller than the rows dial's.
+  const scale = niceScale(observed, 0, 100);
   drawTicks(dial, scale);
   updateNeedle(dial, observed / scale);
   dial.svg.setAttribute(
