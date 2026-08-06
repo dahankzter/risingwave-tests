@@ -1,0 +1,37 @@
+// Thin wrappers over the control endpoints from `bench-web/src/api.rs`. Every function returns
+// `{ ok, status, message }` rather than throwing, so callers (controls.js) can show a real
+// message on failure (a 409 "a load is already running", a 400 from the clean confirmation gate)
+// instead of a generic "something went wrong".
+
+async function post(path, body) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    return { ok: false, status: 0, message: `network error: ${e.message}` };
+  }
+  const text = await res.text().catch(() => '');
+  return { ok: res.ok, status: res.status, message: text || res.statusText };
+}
+
+export const clusterUp = () => post('/api/cluster/up');
+export const clusterDown = () => post('/api/cluster/down');
+export const clusterClean = () => post('/api/cluster/clean', { confirm: 'clean' });
+export const pipelineRebuild = () => post('/api/pipeline/rebuild');
+export const loadStart = (overrides = {}) => post('/api/load/start', overrides);
+export const loadStop = () => post('/api/load/stop');
+export const loadRate = (rate) => post('/api/load/rate', { rate });
+
+export async function getStatus() {
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}

@@ -3,6 +3,7 @@
 //! `tests/api.rs` without a database or a `podman` binary (see `router_for_test`).
 
 pub mod api;
+pub mod assets;
 pub mod event;
 pub mod podman;
 pub mod state;
@@ -17,9 +18,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Builds the full router over `AppState`, ready to have a listener attached. Merges the control
-/// API (`api.rs`) with the `GET /ws` fan-out (`ws.rs`).
+/// API (`api.rs`) with the `GET /ws` fan-out (`ws.rs`), and falls through to the embedded demo
+/// page (`assets.rs`) for everything else — so `/`, `/app.js`, `/style.css`, `/js/*.js`, and
+/// `/fonts/*` are all served from the binary, no disk access at runtime.
 pub fn app_router(state: Arc<AppState>) -> Router {
-    api::router().merge(ws::router()).with_state(state)
+    api::router().merge(ws::router()).with_state(state).fallback(assets::static_handler)
 }
 
 /// A router wired to a `NullCluster` and no live database, for the rejection-path tests in

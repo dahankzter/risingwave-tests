@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MATCH_RECOGNIZE bench console</title>
+  <link rel="stylesheet" href="/fonts/roboto-flex.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__brand">
+      <span class="topbar__title">bench console</span>
+      <span id="conn-badge" class="badge badge--connecting" role="status" aria-live="polite">connecting&hellip;</span>
+    </div>
+
+    <div class="topbar__status" id="status-strip" aria-live="polite">
+      <span class="status-chip">cluster <b id="status-cluster">unknown</b></span>
+      <span class="status-chip">pipeline <b id="status-pipeline">unknown</b></span>
+      <span class="status-chip">load <b id="status-load">stopped</b></span>
+    </div>
+
+    <div class="topbar__controls">
+      <button id="btn-cluster-up" class="btn btn--tonal" type="button">cluster up</button>
+      <button id="btn-cluster-down" class="btn btn--tonal" type="button">cluster down</button>
+      <button id="btn-pipeline-rebuild" class="btn btn--tonal" type="button">rebuild pipeline</button>
+
+      <span class="divider" aria-hidden="true"></span>
+
+      <button id="btn-load-start" class="btn btn--filled" type="button">start load</button>
+      <button id="btn-load-stop" class="btn btn--outlined" type="button">stop load</button>
+      <label class="rate-control">
+        rate
+        <input id="rate-slider" type="range" min="100" max="20000" step="100" value="2000" />
+        <output id="rate-value" for="rate-slider">2000</output>/s
+      </label>
+
+      <span class="divider" aria-hidden="true"></span>
+
+      <button id="btn-cluster-clean" class="btn btn--danger" type="button">clean&hellip;</button>
+    </div>
+  </header>
+
+  <div id="log-strip" class="log-strip" aria-live="polite"></div>
+
+  <main class="layout">
+    <section class="feed-panel" aria-label="alert feed">
+      <div class="feed-panel__header">
+        <h2 class="feed-panel__title">alerts</h2>
+        <p id="feed-caption" class="feed-panel__caption">showing ~20 of ~0 alerts/s &middot; percentiles cover all</p>
+      </div>
+      <ol id="feed-list" class="feed-list"></ol>
+    </section>
+
+    <aside class="rail" aria-label="live metrics">
+      <section class="card card--gauge" aria-label="rows per second">
+        <p class="card__label">rows/s in</p>
+        <p id="gauge-rows-value" class="card__display">0</p>
+        <p id="gauge-rows-caption" class="card__caption">requested 0/s</p>
+        <div class="gauge-track" aria-hidden="true">
+          <div id="gauge-rows-fill" class="gauge-track__fill"></div>
+          <div id="gauge-rows-target" class="gauge-track__target"></div>
+        </div>
+      </section>
+
+      <section class="card card--gauge" aria-label="alerts per second">
+        <p class="card__label">alerts/s out</p>
+        <p id="gauge-alerts-value" class="card__display">0</p>
+        <p class="card__caption">matched chains emitted</p>
+      </section>
+
+      <section class="card card--chart" aria-label="latency percentiles">
+        <p class="card__label">latency (p50 / p95)</p>
+        <canvas id="latency-chart" width="360" height="160"></canvas>
+        <p id="latency-caption" class="card__caption">no samples yet</p>
+      </section>
+
+      <section class="card card--metrics" aria-label="pipeline metrics" id="metrics-card" hidden>
+        <p class="card__label">pipeline metrics</p>
+        <dl class="metrics-list">
+          <div><dt>matches emitted</dt><dd id="metric-matches">&mdash;</dd></div>
+          <div><dt>rows evicted</dt><dd id="metric-evicted">&mdash;</dd></div>
+          <div><dt>scan budget exhausted</dt><dd id="metric-exhausted">&mdash;</dd></div>
+        </dl>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="clean-dialog" class="clean-dialog">
+    <form method="dialog" id="clean-form">
+      <h2>Clean the cluster?</h2>
+      <p>This stops the container and <strong>deletes the data volume</strong>. There is no undo.</p>
+      <p>Type <code>clean</code> to confirm.</p>
+      <input id="clean-input" type="text" autocomplete="off" spellcheck="false" aria-label="type clean to confirm" />
+      <div class="clean-dialog__actions">
+        <button type="button" id="clean-cancel" class="btn btn--outlined">cancel</button>
+        <button type="submit" id="clean-confirm" class="btn btn--danger" disabled>clean it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

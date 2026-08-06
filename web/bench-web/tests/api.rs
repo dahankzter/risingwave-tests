@@ -50,3 +50,45 @@ async fn a_valid_load_request_against_an_unreachable_database_is_not_a_400() {
     assert_ne!(res, 400, "an unreachable database is not a client error; got 400");
     assert_eq!(res, 500, "expected 500 for a start() failure, got {res}");
 }
+
+#[tokio::test]
+async fn static_assets_are_served_with_sane_mime_types() {
+    let app = bench_web::router_for_test();
+
+    let get = |uri: &'static str| {
+        let app = app.clone();
+        async move {
+            use axum::body::Body;
+            use axum::http::Request;
+            use tower::ServiceExt;
+            let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            app.oneshot(req).await.unwrap()
+        }
+    };
+
+    let res = get("/").await;
+    assert_eq!(res.status(), 200);
+    let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/html"), "got {ct}");
+
+    let res = get("/app.js").await;
+    assert_eq!(res.status(), 200);
+    let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("javascript"), "got {ct}");
+
+    let res = get("/style.css").await;
+    assert_eq!(res.status(), 200);
+    let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("css"), "got {ct}");
+
+    let res = get("/fonts/roboto-flex.css").await;
+    assert_eq!(res.status(), 200);
+
+    let res = get("/fonts/RobotoFlex-latin.woff2").await;
+    assert_eq!(res.status(), 200);
+    let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("font") || ct.contains("woff"), "got {ct}");
+
+    let res = get("/js/state.js").await;
+    assert_eq!(res.status(), 200);
+}
