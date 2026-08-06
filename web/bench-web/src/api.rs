@@ -171,6 +171,21 @@ async fn load_start(State(state): State<Arc<AppState>>, Json(req): Json<LoadRequ
         return err(StatusCode::BAD_REQUEST, e.to_string());
     }
 
+    // Refuse to start against a pipeline that isn't there. Without this the run "succeeds": the
+    // handle spins, every insert fails on a missing table, rows/s sits at zero, and the only clue
+    // on screen is the alert reader's reconnect warning — a state that reads as "the engine is
+    // broken" when in fact nobody built the pipeline yet. The status poller keeps this field
+    // current, so it is the same answer the header is showing the operator.
+    // The poller's vocabulary: present / absent / unknown. Only `absent` is a definite no —
+    // `unknown` (probe failed) must not block an operator who knows better.
+    if state.status_snapshot().pipeline == "absent" {
+        return err(
+            StatusCode::CONFLICT,
+            "no pipeline: press \"rebuild pipeline\" first (a load against a missing table \
+             writes nothing and reports no error of its own)",
+        );
+    }
+
     let mut guard = state.run.lock().await;
     if let Some(handle) = guard.as_ref() {
         // `done` means the run finished on its own (hit its row target) without anyone calling

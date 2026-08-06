@@ -190,6 +190,7 @@ async fn aggregator_loop(state: Arc<AppState>) {
                 Err(broadcast::error::RecvError::Closed) => return,
             },
             _ = agg_tick.tick() => {
+                reap_dead_load(&state).await;
                 let (rows_sent, rate_requested) = current_progress(&state).await;
                 rows_in.record(Instant::now(), rows_sent.saturating_sub(last_rows_sent));
                 last_rows_sent = rows_sent;
@@ -231,6 +232,37 @@ async fn aggregator_loop(state: Arc<AppState>) {
 /// `(rows_sent, rate_requested)` off the current run's progress, or `(carry-forward, 0.0)` when
 /// no load is running — `rows_in`'s delta against the last observed `rows_sent` then correctly
 /// reads as zero instead of spuriously spiking once a load starts.
+/// A run that ended by itself — hit its row target, or died on an error such as writing to a
+/// table the pipeline never created — must not keep the header reading "load running". Reap it on
+/// the aggregator tick: clear the slot, report the error if there was one, and set the status to
+/// what actually happened. Without this the failure is invisible: the operator sees "running"
+/// beside a rows/s of zero and no explanation.
+async fn reap_dead_load(state: &Arc<AppState>) {
+    let mut guard = state.run.lock().await;
+    let Some(handle) = guard.as_ref() else { return };
+    if !handle.is_finished() {
+        return;
+    }
+    let handle = guard.take().expect("checked Some above");
+    drop(guard);
+    match handle.join().await {
+        Ok(()) => {
+            state.set_status(|s| s.load = "finished".to_string());
+            state.publish(Event::Log {
+                level: "info".to_string(),
+                text: "load: finished (row target reached)".to_string(),
+            });
+        }
+        Err(e) => {
+            state.set_status(|s| s.load = "failed".to_string());
+            state.publish(Event::Log {
+                level: "error".to_string(),
+                text: format!("load: failed: {e}"),
+            });
+        }
+    }
+}
+
 async fn current_progress(state: &AppState) -> (u64, f64) {
     let guard = state.run.lock().await;
     match guard.as_ref() {

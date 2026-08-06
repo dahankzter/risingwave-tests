@@ -102,6 +102,10 @@ Cluster up/down, pipeline rebuild, load start/stop with a live rate slider, the 
 gauges, a latency chart, and a **details** tab with four panels: latency and throughput, the
 operator metrics, pipeline state, and the run environment.
 
+The button order matters: **cluster up → rebuild pipeline → start load**. Starting a load before
+the pipeline exists is refused with an explanation rather than accepted — a load writing to a
+missing table sends nothing, reports no error of its own, and reads on screen as a broken engine.
+
 Two things the console is deliberate about:
 
 - **Percentiles describe the current run.** Starting a load or rebuilding the pipeline resets the

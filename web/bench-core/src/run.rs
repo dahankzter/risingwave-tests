@@ -97,6 +97,12 @@ impl RunHandle {
     pub fn stop(&self) {
         self.cancel.cancel();
     }
+    /// Whether the driving task has ended (successfully or with an error). Lets a supervisor
+    /// notice a run that died on its own — a load whose every insert fails on a missing table
+    /// otherwise looks "running" forever while sending nothing.
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
     pub async fn join(self) -> anyhow::Result<()> {
         self.task.await?
     }
