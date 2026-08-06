@@ -182,6 +182,10 @@ async fn load_start(State(state): State<Arc<AppState>>, Json(req): Json<LoadRequ
         let _ = old.join().await;
     }
 
+    // `cfg.validate()` above already ruled out "the client sent something invalid" — anything
+    // `start` fails on now (a bad connection string, an unreachable database, `Direct::connect`
+    // erroring) is not the client's fault, so it is a 500, not a 400. Conflating the two would
+    // leave a caller unable to tell "fix your request" from "the database is down".
     match bench_core::run::start(cfg).await {
         Ok(handle) => {
             *guard = Some(handle);
@@ -190,7 +194,7 @@ async fn load_start(State(state): State<Arc<AppState>>, Json(req): Json<LoadRequ
             state.publish(Event::Log { level: "info".to_string(), text: "load: started".to_string() });
             StatusCode::OK.into_response()
         }
-        Err(e) => err(StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("load/start: {e}")),
     }
 }
 
@@ -247,7 +251,16 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
         let mut guard = state.run.lock().await;
         if let Some(handle) = guard.take() {
             handle.stop();
-            let _ = handle.join().await;
+            // A failed writer must not block the rebuild — that's the whole point of being able
+            // to rebuild — but silently swallowing the error would hide a real problem (e.g. the
+            // load died on a connection error moments before the table gets dropped anyway).
+            // Surface it as a log line and keep going.
+            if let Err(e) = handle.join().await {
+                state.publish(Event::Log {
+                    level: "warn".to_string(),
+                    text: format!("pipeline/rebuild: the stopped load ended in error: {e}"),
+                });
+            }
             state.set_status(|s| s.load = "stopped".to_string());
         }
     }

@@ -52,15 +52,40 @@ impl PodmanDriver {
     }
 }
 
+/// Longest chunk of captured output to fold into an error message. podman failures are
+/// occasionally a full stack trace or a registry error dump; that must not flood a JSON response
+/// (or, worse, a demo screen) with kilobytes of noise.
+const MAX_OUTPUT_CHARS: usize = 2000;
+
+fn truncated(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    let s = s.trim();
+    if s.chars().count() > MAX_OUTPUT_CHARS {
+        let head: String = s.chars().take(MAX_OUTPUT_CHARS).collect();
+        format!("{head}... (truncated)")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Captures stdout/stderr rather than inheriting them (`Command::output`, not `Command::status`)
+/// specifically so a failure carries podman's own explanation back to the HTTP caller instead of
+/// a bare exit status. podman is inconsistent about which stream it writes an error to, so stderr
+/// is preferred but stdout is used as a fallback when stderr is empty.
 async fn run(args: &[String]) -> anyhow::Result<()> {
-    let status = Command::new("podman")
+    let output = Command::new("podman")
         .args(args)
         .stdin(Stdio::null())
-        .status()
+        .output()
         .await
         .map_err(|e| anyhow::anyhow!("failed to spawn podman: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("podman {} failed: {status}", args.join(" "));
+    if !output.status.success() {
+        let stderr = truncated(&output.stderr);
+        let detail = if stderr.is_empty() { truncated(&output.stdout) } else { stderr };
+        if detail.is_empty() {
+            anyhow::bail!("podman {} failed: {}", args.join(" "), output.status);
+        }
+        anyhow::bail!("podman {} failed: {}: {detail}", args.join(" "), output.status);
     }
     Ok(())
 }
