@@ -854,3 +854,78 @@ input[type='range']::-moz-range-thumb {
 .card__caption--tight {
   margin: 0 0 6px;
 }
+
+/* ---- Feed column headers -------------------------------------------------- */
+/* Same grid as a feed row, so the labels sit over the columns they name. */
+.feed-head {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: var(--md-sys-typescale-label-small-size, 0.6875rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.feed-head__latency {
+  text-align: right;
+  /* Not truncated: this label is the explanation, and an ellipsis here would defeat it. */
+  white-space: nowrap;
+}
+
+/* ---- Selects in the top bar ---------------------------------------------- */
+.select-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--md-sys-typescale-label-medium-size, 0.75rem);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.select-control select {
+  font: inherit;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-s, 8px);
+  padding: 5px 8px;
+}
+
+/* ---- Scenario transcript ------------------------------------------------- */
+.scenario {
+  padding: var(--space-4, 1rem);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.scenario__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.scenario__title {
+  margin: 0;
+  font-size: var(--md-sys-typescale-title-medium-size, 1rem);
+}
+
+.scenario__title[data-state='good'] { color: var(--bench-good); }
+.scenario__title[data-state='bad'] { color: var(--bench-bad); }
+
+/* Monospaced and scrollable: a transcript is read line by line, and some scenarios print more
+   than fits a panel. */
+.scenario__output {
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--md-sys-color-on-surface);
+}

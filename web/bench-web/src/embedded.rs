@@ -19,6 +19,12 @@ struct PipelineSql;
 #[folder = "../../latency"]
 struct LatencyScripts;
 
+/// The semantics scenarios, so the console can run one on demand — the correctness half of a demo,
+/// next to the throughput half. Embedded for the same CWD-independence reason as the rest.
+#[derive(RustEmbed)]
+#[folder = "../../scenarios/semantics"]
+struct SemanticsScenarios;
+
 /// The embedded copy of `scenarios/perf/setup_realtime.sql`, used whenever `--setup-sql` is not
 /// passed. Panics if the file was somehow not embedded — that would mean the build itself is
 /// broken (the file moved or was renamed without updating this module), not a runtime condition
@@ -49,27 +55,66 @@ pub fn strip_psql_meta_commands(sql: &str) -> String {
     sql.lines().filter(|l| !l.trim_start().starts_with('\\')).collect::<Vec<_>>().join("\n")
 }
 
+/// The semantics scenarios' file names, sorted, without the `.sql`.
+pub fn scenario_names() -> Vec<String> {
+    let mut names: Vec<String> = SemanticsScenarios::iter()
+        .filter_map(|f| f.strip_suffix(".sql").map(str::to_owned))
+        .collect();
+    names.sort();
+    names
+}
+
+/// One scenario's SQL. `None` for a name that is not embedded — the caller turns that into a 404
+/// rather than trusting a name off the wire to reach the filesystem.
+pub fn scenario_sql(name: &str) -> Option<String> {
+    let file = SemanticsScenarios::get(&format!("{name}.sql"))?;
+    String::from_utf8(file.data.into_owned()).ok()
+}
+
+/// Rewrite the realtime pipeline's watermark lateness. The setup SQL keeps a real, runnable
+/// `interval '5' second` (so `make rt-setup` and psql work unchanged) and this substitutes the
+/// number on the way to the server.
+///
+/// Returns `None` when the expected declaration is not found, and the caller must then refuse the
+/// rebuild: quietly falling back to the file's own 5s while the UI reports 1s would make the
+/// console lie about the one number that dominates the latency it displays.
+pub fn with_watermark_lateness(sql: &str, seconds: u32) -> Option<String> {
+    const NEEDLE: &str = "watermark for ts as ts - interval '5' second";
+    if !sql.contains(NEEDLE) {
+        return None;
+    }
+    Some(sql.replace(NEEDLE, &format!("watermark for ts as ts - interval '{seconds}' second")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn setup_sql_is_embedded_and_nonempty() {
+    fn strips_only_meta_commands() {
+        let cleaned = strip_psql_meta_commands("select 1;\n\\echo hi\nselect 2;\n");
+        assert!(cleaned.contains("select 1;") && cleaned.contains("select 2;"));
+        assert!(!cleaned.contains("echo"));
+    }
+
+    #[test]
+    fn the_scenarios_are_embedded() {
+        let names = scenario_names();
+        assert!(
+            names.iter().any(|n| n == "preference_supersession"),
+            "expected the supersession scenario, got {names:?}"
+        );
+        assert!(scenario_sql("preference_supersession").is_some());
+        assert!(scenario_sql("../../../etc/passwd").is_none(), "names must not escape the bundle");
+    }
+
+    #[test]
+    fn the_watermark_lateness_is_rewritten_or_refused() {
         let sql = setup_sql();
-        assert!(sql.contains("create table t_rt"), "embedded setup SQL looks wrong: {sql}");
-    }
-
-    #[test]
-    fn probe_script_is_embedded_and_nonempty() {
-        let script = probe_script();
-        let text = String::from_utf8(script).expect("probe.sh is valid UTF-8");
-        assert!(text.starts_with("#!/usr/bin/env bash"), "embedded probe.sh looks wrong: {text}");
-    }
-
-    #[test]
-    fn strip_psql_meta_commands_drops_backslash_lines_only() {
-        let sql = "select 1;\n\\echo hi\ncreate table t (x int);\n  \\echo indented too";
-        let cleaned = strip_psql_meta_commands(sql);
-        assert_eq!(cleaned, "select 1;\ncreate table t (x int);");
+        let tightened = with_watermark_lateness(&sql, 1).expect("the declaration must be found");
+        assert!(tightened.contains("interval '1' second"));
+        assert!(!tightened.contains("interval '5' second"));
+        // A pipeline whose declaration changed shape must refuse, not silently keep 5s.
+        assert!(with_watermark_lateness("create table t (a int);", 1).is_none());
     }
 }

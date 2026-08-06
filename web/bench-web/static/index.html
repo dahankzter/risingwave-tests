@@ -24,6 +24,15 @@
       <button id="btn-cluster-up" class="btn btn--tonal" type="button">cluster up</button>
       <button id="btn-cluster-down" class="btn btn--tonal" type="button">cluster down</button>
       <button id="btn-pipeline-rebuild" class="btn btn--tonal" type="button">rebuild pipeline</button>
+      <label class="select-control" title="Watermark lateness: how long the sort holds a row before the matcher may treat it as final. Most of the reported latency is this number.">
+        lateness
+        <select id="lateness-select">
+          <option value="">5s (default)</option>
+          <option value="1">1s</option>
+          <option value="0">0s</option>
+          <option value="10">10s</option>
+        </select>
+      </label>
 
       <span class="divider" aria-hidden="true"></span>
 
@@ -38,6 +47,14 @@
       <span class="divider" aria-hidden="true"></span>
 
       <button id="btn-probe-start" class="btn btn--tonal" type="button">probe (3 rounds)</button>
+
+      <span class="divider" aria-hidden="true"></span>
+
+      <label class="select-control">
+        scenario
+        <select id="scenario-select"><option value="">loading&hellip;</option></select>
+      </label>
+      <button id="btn-scenario-run" class="btn btn--tonal" type="button">run</button>
       <button id="btn-details" class="btn btn--tonal" type="button" aria-expanded="false" aria-controls="details-panel">details</button>
 
       <span class="divider" aria-hidden="true"></span>
@@ -53,6 +70,14 @@
       <div class="feed-panel__header">
         <h2 class="feed-panel__title">alerts</h2>
         <p id="feed-caption" class="feed-panel__caption">showing ~20 of ~0 alerts/s &middot; percentiles cover all</p>
+      </div>
+      <!-- Column headers, so the numbers on the right are not an unexplained figure: the whole
+           point of that column is that most of it is a deliberate wait. -->
+      <div class="feed-head" aria-hidden="true">
+        <span class="feed-head__severity">state</span>
+        <span class="feed-head__partition">card</span>
+        <span class="feed-head__chain">chain &middot; matched at</span>
+        <span class="feed-head__latency">ingest &rarr; alert (incl. watermark wait)</span>
       </div>
       <ol id="feed-list" class="feed-list"></ol>
     </section>
@@ -92,6 +117,14 @@
       </section>
     </aside>
   </main>
+
+  <section id="scenario-panel" class="scenario" hidden aria-label="scenario transcript">
+    <div class="scenario__head">
+      <h2 id="scenario-title" class="scenario__title">scenario</h2>
+      <button id="btn-scenario-close" class="btn btn--outlined" type="button">close</button>
+    </div>
+    <pre id="scenario-output" class="scenario__output"></pre>
+  </section>
 
   <section id="details-panel" class="details" hidden aria-label="run details">
     <div class="details__grid">

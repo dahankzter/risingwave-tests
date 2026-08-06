@@ -29,6 +29,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/pipeline/rebuild", post(pipeline_rebuild))
         .route("/api/probe/start", post(probe_start))
         .route("/api/env", get(env_info))
+        .route("/api/scenarios", get(scenario_list))
+        .route("/api/scenarios/run", post(scenario_run))
         .route("/api/pipeline/stats", get(pipeline_stats))
 }
 
@@ -269,7 +271,24 @@ async fn load_rate(State(state): State<Arc<AppState>>, Json(req): Json<RateReque
 /// its next `fetch` fails (the subscription is gone), falls back to `Phase::Disconnected`, and
 /// re-declares both subscription and cursor on its own retry loop. Recreating it here too would
 /// race the reader's retry.
-async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
+#[derive(Deserialize, Default)]
+struct RebuildRequest {
+    /// Watermark lateness for the rebuilt pipeline, in seconds. Absent keeps the setup SQL's own
+    /// declaration. This is the dial that dominates the latency the console displays — 5s of a 6s
+    /// alert is this number — so it is worth being able to change without editing SQL mid-demo.
+    lateness_secs: Option<u32>,
+}
+
+async fn pipeline_rebuild(
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<RebuildRequest>>,
+) -> Response {
+    let req = body.map(|Json(r)| r).unwrap_or_default();
+    if let Some(secs) = req.lateness_secs {
+        if !(0..=600).contains(&secs) {
+            return err(StatusCode::BAD_REQUEST, "lateness_secs must be between 0 and 600");
+        }
+    }
     {
         let mut guard = state.run.lock().await;
         if let Some(handle) = guard.take() {
@@ -307,6 +326,21 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
         Some(path) => bench_core::pipeline::run_sql_file(&client, path).await,
         None => {
             let sql = crate::embedded::setup_sql();
+            // Refuse rather than silently keep the file's own lateness: a console that reports 1s
+            // while the pipeline runs 5s would misattribute four seconds of every measurement.
+            let sql = match req.lateness_secs {
+                Some(secs) => match crate::embedded::with_watermark_lateness(&sql, secs) {
+                    Some(rewritten) => rewritten,
+                    None => {
+                        return err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "could not find the watermark declaration to rewrite; refusing to \
+                             rebuild with a lateness the pipeline would not actually have",
+                        );
+                    }
+                },
+                None => sql,
+            };
             let cleaned = crate::embedded::strip_psql_meta_commands(&sql);
             client.batch_execute(&cleaned).await.map_err(anyhow::Error::from)
         }
@@ -315,6 +349,13 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("pipeline/rebuild: setup sql: {e}"));
     }
 
+    if let Some(secs) = req.lateness_secs {
+        state.set_lateness(Some(secs));
+        state.publish(Event::Log {
+            level: "info".to_string(),
+            text: format!("pipeline: watermark lateness now {secs}s"),
+        });
+    }
     state.set_status(|s| s.pipeline = "rebuilt".to_string());
     // The rebuild dropped and recreated the pipeline: everything measured before it belongs to a
     // different world. Same epoch roll as load/start.
@@ -381,6 +422,9 @@ struct EnvInfo {
     pin_why: String,
     trusted: bool,
     reasons: Vec<String>,
+    /// Watermark lateness in effect, or `null` for the pipeline SQL's own 5s. Most of the latency
+    /// the console reports is this number.
+    lateness_secs: Option<u32>,
 }
 
 async fn env_info(State(state): State<Arc<AppState>>) -> Response {
@@ -408,6 +452,7 @@ async fn env_info(State(state): State<Arc<AppState>>) -> Response {
         pin_why,
         trusted: reasons.is_empty(),
         reasons,
+        lateness_secs: state.lateness_secs(),
     })
     .into_response()
 }
@@ -477,4 +522,161 @@ fn now_ms() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as f64)
         .unwrap_or(0.0)
+}
+
+/// The scenarios the console can run: the correctness half of a demo, next to the throughput half.
+async fn scenario_list() -> Response {
+    Json(crate::embedded::scenario_names()).into_response()
+}
+
+#[derive(Deserialize)]
+struct ScenarioRequest {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ScenarioResult {
+    name: String,
+    /// Statement-by-statement transcript: each `select` with the rows it returned, so the page can
+    /// show what a scenario actually asserted rather than a bare pass/fail.
+    output: Vec<String>,
+    ok: bool,
+}
+
+/// Run one embedded scenario against the cluster and hand back its transcript.
+///
+/// The scenario files are psql scripts: they carry `\echo` lines (their expectations, in prose)
+/// and a mix of DDL and queries. This runs them statement by statement so a `select`'s rows can be
+/// captured — `batch_execute` would run the lot but discard every result — and keeps the `\echo`
+/// text inline, which is what makes the transcript readable as "expected X, got Y".
+async fn scenario_run(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ScenarioRequest>,
+) -> Response {
+    let Some(sql) = crate::embedded::scenario_sql(&req.name) else {
+        return err(StatusCode::NOT_FOUND, format!("no such scenario: {}", req.name));
+    };
+    if state.status_snapshot().cluster != "up" {
+        return err(StatusCode::CONFLICT, "the cluster is not up");
+    }
+
+    let (client, connection) = match tokio_postgres::connect(&state.db_url, tokio_postgres::NoTls).await
+    {
+        Ok(pair) => pair,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("connect: {e}")),
+    };
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let mut output = Vec::new();
+    let mut ok = true;
+    for piece in split_scenario(&sql) {
+        match piece {
+            Piece::Echo(text) => output.push(format!("-- {text}")),
+            Piece::Statement(stmt) => {
+                let is_query = stmt.trim_start().to_lowercase().starts_with("select");
+                if is_query {
+                    match client.query(&stmt, &[]).await {
+                        Ok(rows) if rows.is_empty() => output.push("(0 rows)".to_string()),
+                        Ok(rows) => {
+                            for row in &rows {
+                                output.push(format_row(row));
+                            }
+                        }
+                        Err(e) => {
+                            ok = false;
+                            output.push(format!("ERROR: {e}"));
+                            break;
+                        }
+                    }
+                } else if let Err(e) = client.batch_execute(&stmt).await {
+                    ok = false;
+                    output.push(format!("ERROR in {}: {e}", first_words(&stmt)));
+                    break;
+                }
+            }
+        }
+    }
+
+    state.publish(Event::Log {
+        level: if ok { "info".to_string() } else { "error".to_string() },
+        text: format!("scenario {}: {}", req.name, if ok { "ran" } else { "failed" }),
+    });
+    Json(ScenarioResult { name: req.name, output, ok }).into_response()
+}
+
+enum Piece {
+    Echo(String),
+    Statement(String),
+}
+
+/// Split a psql scenario into `\echo` prose and individual statements. Statement splitting is on
+/// `;` at end of line, which is how these files are written throughout — a full SQL parser would
+/// be the wrong amount of machinery for a fixed, in-repo set of scripts.
+fn split_scenario(sql: &str) -> Vec<Piece> {
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    for line in sql.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("\\echo") {
+            pieces.push(Piece::Echo(rest.trim().trim_matches('\'').to_string()));
+            continue;
+        }
+        if trimmed.starts_with('\\') || trimmed.starts_with("--") || trimmed.is_empty() {
+            continue;
+        }
+        current.push_str(line);
+        current.push('\n');
+        if trimmed.ends_with(';') {
+            pieces.push(Piece::Statement(std::mem::take(&mut current)));
+        }
+    }
+    if !current.trim().is_empty() {
+        pieces.push(Piece::Statement(current));
+    }
+    pieces
+}
+
+/// A row rendered as `a | b | c`. Dispatches on each column's Postgres type because a scenario's
+/// shape is not known up front and `try_get::<Option<String>>` fails on anything that is not text
+/// — which rendered every integer measure as a `?`, i.e. hid exactly the values a scenario asserts.
+fn format_row(row: &tokio_postgres::Row) -> String {
+    use tokio_postgres::types::Type;
+
+    fn cell(row: &tokio_postgres::Row, i: usize) -> Option<String> {
+        let ty = row.columns()[i].type_();
+        Some(match *ty {
+            Type::BOOL => row.try_get::<_, Option<bool>>(i).ok()??.to_string(),
+            Type::INT2 => row.try_get::<_, Option<i16>>(i).ok()??.to_string(),
+            Type::INT4 => row.try_get::<_, Option<i32>>(i).ok()??.to_string(),
+            Type::INT8 => row.try_get::<_, Option<i64>>(i).ok()??.to_string(),
+            Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).ok()??.to_string(),
+            Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).ok()??.to_string(),
+            Type::TIMESTAMPTZ | Type::TIMESTAMP => {
+                let ts = row.try_get::<_, Option<time::OffsetDateTime>>(i).ok()??;
+                // Seconds are enough: these transcripts are read for values, not for sub-second
+                // ordering, and a full RFC3339 stamp per column makes a row unreadable.
+                format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    ts.year(),
+                    u8::from(ts.month()),
+                    ts.day(),
+                    ts.hour(),
+                    ts.minute(),
+                    ts.second()
+                )
+            }
+            _ => row.try_get::<_, Option<String>>(i).ok()??,
+        })
+    }
+
+    (0..row.len())
+        .map(|i| cell(row, i).unwrap_or_else(|| "NULL".to_string()))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn first_words(stmt: &str) -> String {
+    stmt.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
 }

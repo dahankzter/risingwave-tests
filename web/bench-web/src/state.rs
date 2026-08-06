@@ -54,6 +54,10 @@ pub struct AppState {
     /// CPU layout in effect, or `None` when pinning is off (the default). Also surfaced by
     /// `/api/env`: a layout nobody can see is a layout nobody can check.
     pub pin_layout: Option<crate::pin::Layout>,
+    /// Watermark lateness the pipeline was last rebuilt with, in seconds. `None` means the setup
+    /// SQL's own declaration (5s). Surfaced by `/api/env` because it is most of the latency the
+    /// console reports — a number nobody can see is a number nobody can account for.
+    lateness_secs: Mutex<Option<u32>>,
     /// Override for where `pipeline/rebuild` finds `setup_realtime.sql`. `None` (the default) means
     /// use the copy embedded into the binary at compile time (see `embedded.rs`) — CWD-independent,
     /// so the server behaves the same whether it is launched from `web/` or the repo root. `Some`
@@ -89,6 +93,7 @@ impl AppState {
             db_url,
             image,
             pin_layout,
+            lateness_secs: Mutex::new(None),
             pipeline_sql,
             probe_running: tokio::sync::Mutex::new(false),
             recent: Mutex::new(VecDeque::with_capacity(RECENT_CAPACITY)),
@@ -99,6 +104,14 @@ impl AppState {
     pub fn publish(&self, event: Event) {
         // No receiver yet is not an error; the reader has the same rule (see stream.rs).
         let _ = self.tx.send(event);
+    }
+
+    pub fn set_lateness(&self, secs: Option<u32>) {
+        *self.lateness_secs.lock().expect("lateness mutex poisoned") = secs;
+    }
+
+    pub fn lateness_secs(&self) -> Option<u32> {
+        *self.lateness_secs.lock().expect("lateness mutex poisoned")
     }
 
     pub fn set_status(&self, f: impl FnOnce(&mut Status)) {

@@ -21,7 +21,23 @@ async function post(path, body) {
 export const clusterUp = () => post('/api/cluster/up');
 export const clusterDown = () => post('/api/cluster/down');
 export const clusterClean = () => post('/api/cluster/clean', { confirm: 'clean' });
-export const pipelineRebuild = () => post('/api/pipeline/rebuild');
+// `lateness` in seconds, or null to keep the pipeline SQL's own declaration.
+export const pipelineRebuild = (lateness = null) =>
+  post('/api/pipeline/rebuild', lateness == null ? {} : { lateness_secs: lateness });
+
+export const scenarioList = async () => {
+  const res = await fetch('/api/scenarios');
+  return res.ok ? res.json() : [];
+};
+
+export const scenarioRun = async (name) => {
+  const res = await fetch('/api/scenarios/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  return { ok: res.ok, body: await res.json().catch(() => null) };
+};
 export const loadStart = (overrides = {}) => post('/api/load/start', overrides);
 export const loadStop = () => post('/api/load/stop');
 export const loadRate = (rate) => post('/api/load/rate', { rate });

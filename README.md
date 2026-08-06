@@ -102,6 +102,17 @@ Cluster up/down, pipeline rebuild, load start/stop with a live rate slider, the 
 gauges, a latency chart, and a **details** tab with four panels: latency and throughput, the
 operator metrics, pipeline state, and the run environment.
 
+The top bar also carries two demo levers:
+
+- **lateness** — the watermark tolerance the pipeline is rebuilt with (5s default, or 10/1/0s).
+  Since most of the reported latency *is* this number, switching it and rebuilding turns "latency
+  is a policy dial, not an engine limit" into something you can show rather than assert. The
+  server refuses the rebuild if it cannot find the declaration to rewrite, rather than reporting a
+  lateness the pipeline does not actually have.
+- **scenario** — run any of the embedded semantics scenarios and read its transcript, including
+  the scenario's own `\echo` expectations, so the panel reads as "expected X, got Y". The
+  correctness half of a demo, next to the throughput half.
+
 The button order matters: **cluster up → rebuild pipeline → start load**. Starting a load before
 the pipeline exists is refused with an explanation rather than accepted — a load writing to a
 missing table sends nothing, reports no error of its own, and reads on screen as a broken engine.

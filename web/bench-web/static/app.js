@@ -47,6 +47,13 @@ const dom = {
   gaugeRowsDial: document.getElementById('gauge-rows-dial'),
   gaugeAlertsValue: document.getElementById('gauge-alerts-value'),
   gaugeAlertsDial: document.getElementById('gauge-alerts-dial'),
+  latenessSelect: document.getElementById('lateness-select'),
+  scenarioSelect: document.getElementById('scenario-select'),
+  btnScenarioRun: document.getElementById('btn-scenario-run'),
+  btnScenarioClose: document.getElementById('btn-scenario-close'),
+  scenarioPanel: document.getElementById('scenario-panel'),
+  scenarioTitle: document.getElementById('scenario-title'),
+  scenarioOutput: document.getElementById('scenario-output'),
 
   latencyChart: document.getElementById('latency-chart'),
   latencyCaption: document.getElementById('latency-caption'),
