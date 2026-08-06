@@ -213,6 +213,31 @@ async fn connect_and_prepare(url: &str) -> anyhow::Result<tokio_postgres::Client
     Ok(client)
 }
 
+/// Every cause in an error chain, joined. `tokio_postgres::Error`'s own `Display` is the string
+/// `"db error"` — the server's actual complaint ("table or source \"t_rt_alerts\" does not
+/// exist") lives one level down in its source. Printing only the outermost error therefore tells
+/// the operator nothing AND hides the text the waiting/failure classification keys on, which is
+/// exactly how an expected "no pipeline yet" state ended up on screen as an opaque warning.
+pub fn full_chain(err: &anyhow::Error) -> String {
+    chain_of(err.as_ref())
+}
+
+/// The same flattening for any `std::error::Error` — `fetch_batch` returns a bare
+/// `tokio_postgres::Error`, which is the very type whose `Display` hides everything.
+pub fn chain_of(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        // Skip a cause that adds nothing (some wrappers repeat their source verbatim).
+        if !parts.iter().any(|p| p == &text) {
+            parts.push(text);
+        }
+        source = cause.source();
+    }
+    parts.join(": ")
+}
+
 async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
     let mut reader = Reader::new();
     let mut client: Option<tokio_postgres::Client> = None;
@@ -232,7 +257,7 @@ async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
                     client = None;
                     // A send error here just means no receiver is listening yet; the reader
                     // keeps going regardless — it must never die on account of the channel.
-                    if let Some(ev) = reader.fail("connect/setup", &e.to_string()) {
+                    if let Some(ev) = reader.fail("connect/setup", &full_chain(&e)) {
                         let _ = tx.send(ev);
                     }
                     tokio::time::sleep(RETRY_SLEEP).await;
@@ -278,7 +303,7 @@ async fn reader_loop(url: String, tx: broadcast::Sender<Event>) {
             }
             Err(e) => {
                 client = None;
-                if let Some(ev) = reader.fail("fetch", &e.to_string()) {
+                if let Some(ev) = reader.fail("fetch", &chain_of(&e)) {
                     let _ = tx.send(ev);
                 }
                 tokio::time::sleep(RETRY_SLEEP).await;

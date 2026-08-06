@@ -737,22 +737,43 @@ input[type='range']::-moz-range-thumb {
 
 /* Status chips carry their own verdict: a glance at the header answers "is this thing working",
    which the log strip cannot — it holds one line, and a background message overwrites an action's
-   confirmation moments after it appears. */
+   confirmation moments after it appears.
+
+   Deliberately NOT the theme's primary colour: that teal is the accent on buttons and every live
+   number, so tinting a chip with it reads as "this is a control", not "this is healthy". Green and
+   red are only ever used here, for exactly this meaning. */
+:root {
+  --bench-good: #1b6b3a;
+  --bench-good-bg: #c8f2d6;
+  --bench-bad: #ba1a1a;
+  --bench-bad-bg: #ffdad6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bench-good: #6ee7a0;
+    --bench-good-bg: #16351f;
+    --bench-bad: #ffb4ab;
+    --bench-bad-bg: #3a1614;
+  }
+}
+
 .status-chip[data-state='good'] {
-  background: color-mix(in srgb, var(--md-sys-color-primary) 18%, var(--md-sys-color-surface-container-high));
-  color: var(--md-sys-color-on-surface);
+  background: var(--bench-good-bg);
+  color: var(--bench-good);
 }
 
 .status-chip[data-state='good'] b {
-  color: var(--md-sys-color-primary);
+  color: var(--bench-good);
 }
 
 .status-chip[data-state='bad'] {
-  background: color-mix(in srgb, var(--md-sys-color-error) 16%, var(--md-sys-color-surface-container-high));
+  background: var(--bench-bad-bg);
+  color: var(--bench-bad);
 }
 
 .status-chip[data-state='bad'] b {
-  color: var(--md-sys-color-error);
+  color: var(--bench-bad);
 }
 
 /* 'unknown' keeps the neutral default: an unproven state must not look like a healthy one. */
