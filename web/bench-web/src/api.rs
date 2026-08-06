@@ -31,6 +31,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/env", get(env_info))
         .route("/api/scenarios", get(scenario_list))
         .route("/api/scenarios/run", post(scenario_run))
+        .route("/api/sql/run", post(sql_run))
+        .route("/api/catalog", get(catalog))
         .route("/api/pipeline/stats", get(pipeline_stats))
 }
 
@@ -557,6 +559,11 @@ struct ScenarioBlock {
     rows: Vec<Vec<String>>,
     /// Set when the statement failed; the page shows it in place of a table.
     error: Option<String>,
+    /// Set for a statement that succeeded without producing a result set, so the page can say
+    /// "ran" rather than leave it out. Scenario transcripts omit these (their `\echo` prose is the
+    /// narrative); the playground shows them, because there the statements ARE what the user wrote
+    /// and a silently-absent `create table` reads as a statement that never ran.
+    status: Option<String>,
     /// A streaming plan, when this block describes one: the operator tree the check's view compiles
     /// to. Captured for every materialized view a check creates, because that tree IS the feature
     /// under discussion — MATCH_RECOGNIZE over a WatermarkSort over a hash exchange.
@@ -630,6 +637,122 @@ struct ScenarioResult {
     ok: bool,
 }
 
+/// Execute a SQL script statement by statement, collecting each result as a [`ScenarioBlock`].
+///
+/// Statement-at-a-time rather than `batch_execute` because that discards every result set, and the
+/// results are the point — for a check they are what it asserts, and in the playground they are
+/// what the user asked for. `\echo` lines become the label of the block that follows, which is how
+/// a scenario's stated expectation ends up captioning its own result.
+///
+/// Also explains every materialized view it creates, while the view's inputs still exist: a check
+/// drops its tables on the way out, and a user may too.
+/// Whether statements that return no result set get a block of their own.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Ack {
+    /// Only results are reported — a curated scenario's `\echo` lines already narrate the DDL.
+    ResultsOnly,
+    /// Every statement is reported, so hand-written SQL accounts for each line the user typed.
+    EveryStatement,
+}
+
+async fn run_sql_blocks(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    ack: Ack,
+) -> (Vec<ScenarioBlock>, bool) {
+    let mut blocks: Vec<ScenarioBlock> = Vec::new();
+    let mut ok = true;
+    // The `\echo` line most recently seen: it states the expectation for the result that follows.
+    let mut pending_expect: Option<String> = None;
+    for piece in split_scenario(sql) {
+        let stmt = match piece {
+            // The files write `\echo 'expect: …'`, so the word is already there — the caption
+            // must not read "expect: expect: …".
+            Piece::Echo(text) => {
+                pending_expect = Some(text);
+                continue;
+            }
+            Piece::Statement(stmt) => stmt,
+        };
+
+        if returns_rows(&stmt) {
+            // With no `\echo` to caption it, a playground query captions itself with its own text;
+            // a scenario deliberately does not, so its transcript never reads "expect select …" as
+            // though the statement were the assertion.
+            let caption = || match ack {
+                Ack::EveryStatement => Some(first_words(&stmt)),
+                Ack::ResultsOnly => None,
+            };
+            match client.query(&stmt, &[]).await {
+                Ok(rows) => {
+                    let columns = rows
+                        .first()
+                        .map(|r| r.columns().iter().map(|c| c.name().to_owned()).collect())
+                        .unwrap_or_default();
+                    blocks.push(ScenarioBlock {
+                        expect: pending_expect.take().or_else(caption),
+                        columns,
+                        rows: rows.iter().map(row_cells).collect(),
+                        ..Default::default()
+                    });
+                }
+                Err(e) => {
+                    ok = false;
+                    blocks.push(ScenarioBlock {
+                        expect: pending_expect.take().or_else(caption),
+                        error: Some(crate::stream::chain_of(&e)),
+                        ..Default::default()
+                    });
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if let Err(e) = client.batch_execute(&stmt).await {
+            ok = false;
+            blocks.push(ScenarioBlock {
+                expect: Some(format!("running: {}", first_words(&stmt))),
+                error: Some(crate::stream::chain_of(&e)),
+                ..Default::default()
+            });
+            break;
+        }
+
+        if ack == Ack::EveryStatement {
+            blocks.push(ScenarioBlock {
+                expect: Some(first_words(&stmt)),
+                status: Some("ran".to_string()),
+                ..Default::default()
+            });
+        }
+
+        // A view's plan is explained now, while its inputs exist. A failure here is not the
+        // statement failing — the view was created successfully — so it is stepped over rather
+        // than aborting the run.
+        if let Some((name, query)) = materialized_view_query(&stmt) {
+            let explain = format!("explain create materialized view _plan_{name} as {query}");
+            if let Ok(rows) = client.query(&explain, &[]).await {
+                let text = rows
+                    .iter()
+                    .filter_map(|r| r.try_get::<_, Option<String>>(0).ok().flatten())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let nodes = parse_plan(&text);
+                if !nodes.is_empty() {
+                    blocks.push(ScenarioBlock {
+                        expect: Some(format!("plan for {name}")),
+                        plan: Some(nodes),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+
+    (blocks, ok)
+}
+
 /// Run one embedded scenario against the cluster and hand back its transcript.
 ///
 /// The scenario files are psql scripts: they carry `\echo` lines (their expectations, in prose)
@@ -656,75 +779,7 @@ async fn scenario_run(
         let _ = connection.await;
     });
 
-    let mut blocks: Vec<ScenarioBlock> = Vec::new();
-    let mut ok = true;
-    // The `\echo` line most recently seen: it states the expectation for the result that follows.
-    let mut pending_expect: Option<String> = None;
-    for piece in split_scenario(&sql) {
-        match piece {
-            // The files write `\echo 'expect: …'`, so the word is already there — the caption
-            // must not read "expect: expect: …".
-            Piece::Echo(text) => pending_expect = Some(text),
-            Piece::Statement(stmt) => {
-                let is_query = stmt.trim_start().to_lowercase().starts_with("select");
-                if is_query {
-                    match client.query(&stmt, &[]).await {
-                        Ok(rows) => {
-                            let columns = rows
-                                .first()
-                                .map(|r| r.columns().iter().map(|c| c.name().to_owned()).collect())
-                                .unwrap_or_default();
-                            blocks.push(ScenarioBlock {
-                                expect: pending_expect.take(),
-                                columns,
-                                rows: rows.iter().map(row_cells).collect(),
-                                error: None,
-                                plan: None,
-                            });
-                        }
-                        Err(e) => {
-                            ok = false;
-                            blocks.push(ScenarioBlock {
-                                expect: pending_expect.take(),
-                                error: Some(e.to_string()),
-                                ..Default::default()
-                            });
-                            break;
-                        }
-                    }
-                } else if let Err(e) = client.batch_execute(&stmt).await {
-                    ok = false;
-                    blocks.push(ScenarioBlock {
-                        expect: Some(format!("running: {}", first_words(&stmt))),
-                        error: Some(e.to_string()),
-                        ..Default::default()
-                    });
-                    break;
-                } else if let Some((name, query)) = materialized_view_query(&stmt) {
-                    // Explain it now, while its inputs exist. A failure here is not the check
-                    // failing — the view was created successfully — so it is recorded and stepped
-                    // over rather than aborting the run.
-                    if let Ok(rows) =
-                        client.query(&format!("explain create materialized view _plan_{name} as {query}"), &[]).await
-                    {
-                        let text = rows
-                            .iter()
-                            .filter_map(|r| r.try_get::<_, Option<String>>(0).ok().flatten())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let nodes = parse_plan(&text);
-                        if !nodes.is_empty() {
-                            blocks.push(ScenarioBlock {
-                                expect: Some(format!("plan for {name}")),
-                                plan: Some(nodes),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let (blocks, ok) = run_sql_blocks(&client, &sql, Ack::ResultsOnly).await;
 
     state.publish(Event::Log {
         level: if ok { "info".to_string() } else { "error".to_string() },
@@ -750,12 +805,20 @@ fn split_scenario(sql: &str) -> Vec<Piece> {
             pieces.push(Piece::Echo(rest.trim().trim_matches('\'').to_string()));
             continue;
         }
-        if trimmed.starts_with('\\') || trimmed.starts_with("--") || trimmed.is_empty() {
+        if trimmed.starts_with('\\') || trimmed.is_empty() {
             continue;
         }
-        current.push_str(line);
+        // Drop a trailing line comment before looking for the terminator. A full-line comment
+        // becomes empty and is skipped, as before; a comment *after* code no longer hides the `;`,
+        // which used to glue the statement to the one following it.
+        let code = strip_line_comment(line);
+        let code_trimmed = code.trim();
+        if code_trimmed.is_empty() {
+            continue;
+        }
+        current.push_str(code_trimmed);
         current.push('\n');
-        if trimmed.ends_with(';') {
+        if code_trimmed.ends_with(';') {
             pieces.push(Piece::Statement(std::mem::take(&mut current)));
         }
     }
@@ -763,6 +826,45 @@ fn split_scenario(sql: &str) -> Vec<Piece> {
         pieces.push(Piece::Statement(current));
     }
     pieces
+}
+
+/// Cut a trailing `--` line comment, leaving `--` that falls inside a single-quoted literal alone.
+/// Quote tracking is deliberately minimal — single quotes only, no dollar quoting — because that is
+/// the whole of what these scripts and hand-typed queries use, and a fuller lexer would be a
+/// different piece of machinery than a line splitter.
+fn strip_line_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_quote = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => in_quote = !in_quote,
+            b'-' if !in_quote && bytes.get(i + 1) == Some(&b'-') => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
+/// Whether a statement produces a result set worth capturing.
+///
+/// The distinction matters because the two paths are different protocol calls: a row-returning
+/// statement goes through `query`, anything else through `batch_execute`, which discards results.
+/// Sending `show tables` down the second path is not an error — it just silently produces nothing,
+/// which is the worst possible outcome for someone using it to find out what exists.
+///
+/// Classified on the leading keyword only, so a table or column merely *named* like one (`update
+/// selections …`) is not misread.
+fn returns_rows(stmt: &str) -> bool {
+    let Some(first) = stmt.split_whitespace().next() else {
+        return false;
+    };
+    let first = first.trim_start_matches('(').to_lowercase();
+    matches!(
+        first.as_str(),
+        "select" | "show" | "describe" | "desc" | "explain" | "with" | "values" | "table"
+    )
 }
 
 /// Every cell of a row as display text.
@@ -813,4 +915,151 @@ fn fmt_datetime(y: i32, mo: u8, d: u8, h: u8, mi: u8, s: u8) -> String {
 
 fn first_words(stmt: &str) -> String {
     stmt.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
+}
+
+#[derive(Deserialize)]
+struct SqlRequest {
+    sql: String,
+}
+
+#[derive(Serialize)]
+struct SqlResult {
+    blocks: Vec<ScenarioBlock>,
+    ok: bool,
+}
+
+/// The playground: run whatever the user typed and hand back every result set.
+///
+/// This is an arbitrary-SQL endpoint, which is a deliberate choice rather than an oversight. The
+/// console already starts and destroys clusters and deletes the data volume, binds loopback by
+/// default, and warns loudly when told to bind anything else — a SQL box does not widen that
+/// exposure. What it adds is the ability to put RisingWave through its paces beyond the fixed
+/// scenarios, which is the point of a bench.
+async fn sql_run(State(state): State<Arc<AppState>>, Json(req): Json<SqlRequest>) -> Response {
+    if req.sql.trim().is_empty() {
+        return err(StatusCode::BAD_REQUEST, "no SQL to run");
+    }
+    if state.status_snapshot().cluster != "up" {
+        return err(StatusCode::CONFLICT, "the cluster is not up");
+    }
+    let (client, connection) =
+        match tokio_postgres::connect(&state.db_url, tokio_postgres::NoTls).await {
+            Ok(pair) => pair,
+            Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, format!("connect: {e}")),
+        };
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let (blocks, ok) = run_sql_blocks(&client, &req.sql, Ack::EveryStatement).await;
+    Json(SqlResult { blocks, ok }).into_response()
+}
+
+#[derive(Serialize)]
+struct CatalogEntry {
+    name: String,
+    kind: &'static str,
+}
+
+/// What exists in the database right now, for the playground's browser. Sourced from `rw_catalog`
+/// rather than a `show` statement per kind so one request answers the whole question.
+async fn catalog(State(state): State<Arc<AppState>>) -> Response {
+    let (client, connection) =
+        match tokio_postgres::connect(&state.db_url, tokio_postgres::NoTls).await {
+            // A down cluster is an ordinary state for this endpoint: an empty list, not a 500.
+            Ok(pair) => pair,
+            Err(_) => return Json(Vec::<CatalogEntry>::new()).into_response(),
+        };
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let mut out: Vec<CatalogEntry> = Vec::new();
+    for (kind, relation) in [
+        ("table", "rw_tables"),
+        ("materialized view", "rw_materialized_views"),
+        ("source", "rw_sources"),
+        ("sink", "rw_sinks"),
+        // `rw_views` is skipped deliberately: it is dominated by the pg_catalog compatibility
+        // views, which are noise for someone writing queries against their own objects.
+    ] {
+        let sql = format!("select name from rw_catalog.{relation} order by name");
+        if let Ok(rows) = client.query(&sql, &[]).await {
+            for row in rows {
+                if let Ok(name) = row.try_get::<_, String>(0) {
+                    // Internal state tables are noise for someone writing queries.
+                    if name.starts_with("__internal") {
+                        continue;
+                    }
+                    out.push(CatalogEntry { name, kind });
+                }
+            }
+        }
+    }
+    Json(out).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_trailing_line_comment_still_ends_the_statement() {
+        // Curated scenario files never do this, but pasted SQL does constantly. Without the cut,
+        // `select 1;` never terminates and swallows the statement after it — which the extended
+        // protocol then rejects as multiple statements.
+        let pieces = split_scenario("select 1; -- first\nselect 2;\n");
+        let stmts: Vec<String> = pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Statement(s) => Some(s.trim().to_string()),
+                Piece::Echo(_) => None,
+            })
+            .collect();
+        assert_eq!(stmts, vec!["select 1;", "select 2;"]);
+    }
+
+    #[test]
+    fn a_double_dash_inside_a_string_literal_is_not_a_comment() {
+        let pieces = split_scenario("select 'a -- b';\n");
+        let stmts: Vec<String> = pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Statement(s) => Some(s.trim().to_string()),
+                Piece::Echo(_) => None,
+            })
+            .collect();
+        assert_eq!(stmts, vec!["select 'a -- b';"]);
+    }
+
+    #[test]
+    fn row_returning_statements_are_recognised() {
+        for stmt in [
+            "select 1",
+            "  SELECT 1",
+            "show tables",
+            "SHOW MATERIALIZED VIEWS",
+            "describe t_rt",
+            "explain create materialized view m as select 1",
+            "with x as (select 1) select * from x",
+            "values (1), (2)",
+        ] {
+            assert!(returns_rows(stmt), "{stmt:?} returns rows");
+        }
+    }
+
+    #[test]
+    fn statements_without_a_result_set_are_recognised() {
+        for stmt in [
+            "create table t (a int)",
+            "insert into t values (1)",
+            "flush",
+            "drop table t",
+            "create materialized view m as select * from t",
+            // A column or table merely *named* like a keyword must not flip the classification.
+            "update selections set a = 1",
+        ] {
+            assert!(!returns_rows(stmt), "{stmt:?} has no result set");
+        }
+    }
 }

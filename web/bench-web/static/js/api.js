@@ -38,6 +38,27 @@ export const scenarioRun = async (name) => {
   });
   return { ok: res.ok, body: await res.json().catch(() => null) };
 };
+/** Run hand-written SQL, statement at a time. Returns `{ ok, body }` like `scenarioRun` — a failing
+ * statement is a result to display, not a transport error, so the body carries the failure. */
+export const sqlRun = async (sql) => {
+  const res = await fetch('/api/sql/run', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sql }),
+  });
+  return { ok: res.ok, body: await res.json().catch(() => null) };
+};
+
+/** The user's own tables, views, sources and sinks. Empty when the cluster is down. */
+export const catalog = async () => {
+  try {
+    const res = await fetch('/api/catalog');
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+};
+
 export const loadStart = (overrides = {}) => post('/api/load/start', overrides);
 export const loadStop = () => post('/api/load/stop');
 export const loadRate = (rate) => post('/api/load/rate', { rate });

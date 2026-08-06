@@ -13,6 +13,7 @@ import { renderConnectionBadge, renderStatus, renderMetrics, renderLateness } fr
 import { renderLog } from './js/render/log.js';
 import { wireDetails } from './js/render/details.js';
 import { wireScenarios } from './js/render/scenarios.js';
+import { wirePlayground } from './js/render/playground.js';
 
 // A genuinely uncaught exception (a bug in a render callback, say) must not fail silently the
 // way a dropped WebSocket must not: surface it on the page itself, in the same log strip used for
@@ -55,6 +56,13 @@ const dom = {
   scenarioDescription: document.getElementById('scenario-description'),
   btnScenarioRun: document.getElementById('btn-scenario-run'),
   scenarioResults: document.getElementById('scenario-results'),
+
+  catalogList: document.getElementById('catalog-list'),
+  btnCatalogRefresh: document.getElementById('btn-catalog-refresh'),
+  sqlInput: document.getElementById('sql-input'),
+  btnSqlRun: document.getElementById('btn-sql-run'),
+  btnSqlClear: document.getElementById('btn-sql-clear'),
+  sqlResults: document.getElementById('sql-results'),
 
   latencyChart: document.getElementById('latency-chart'),
   latencyCaption: document.getElementById('latency-caption'),
@@ -160,6 +168,7 @@ wireDetails(store);
 const TABS = [
   ['tab-live', 'view-live'],
   ['tab-correctness', 'view-correctness'],
+  ['tab-playground', 'view-playground'],
   ['tab-details', 'view-details'],
 ];
 function selectTab(activeId) {
@@ -179,6 +188,8 @@ selectTab('tab-live');
 
 // The correctness tab owns its picker, its description text and its results area.
 wireScenarios(dom, api, showMessage);
+// The playground owns its catalog browser, its editor and its results area.
+wirePlayground(dom, api, showMessage);
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
 /** The two header renderers that share a trigger: a status event carries the live lateness, and

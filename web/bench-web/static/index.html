@@ -70,6 +70,7 @@
   <nav class="tabs" role="tablist" aria-label="views">
     <button class="tab" role="tab" id="tab-live" aria-controls="view-live" aria-selected="true">live</button>
     <button class="tab" role="tab" id="tab-correctness" aria-controls="view-correctness" aria-selected="false">correctness</button>
+    <button class="tab" role="tab" id="tab-playground" aria-controls="view-playground" aria-selected="false">playground</button>
     <button class="tab" role="tab" id="tab-details" aria-controls="view-details" aria-selected="false">details</button>
   </nav>
 
@@ -148,6 +149,46 @@
         Pick a check and press <strong>run check</strong>. Each step appears as the expectation the
         check states, followed by the rows this cluster actually returned.
       </p>
+    </div>
+  </section>
+
+  <section class="view playground" id="view-playground" role="tabpanel" aria-labelledby="tab-playground" hidden>
+    <!-- Catalog on the left, editor and results on the right. Same split as the correctness tab:
+         you browse occasionally and read results constantly. -->
+    <aside class="playground__catalog">
+      <div class="playground__catalog-head">
+        <h2 class="playground__heading">objects</h2>
+        <button id="btn-catalog-refresh" class="btn btn--outlined btn--small" type="button">refresh</button>
+      </div>
+      <p class="playground__hint">
+        Click a name to describe it. Internal state tables and the pg_catalog compatibility views
+        are omitted.
+      </p>
+      <div id="catalog-list" class="catalog-list"></div>
+      <div class="playground__shortcuts">
+        <button class="btn btn--tonal btn--small" data-sql="show tables;" type="button">show tables</button>
+        <button class="btn btn--tonal btn--small" data-sql="show materialized views;" type="button">show views</button>
+        <button class="btn btn--tonal btn--small" data-sql="show sources;" type="button">show sources</button>
+        <button class="btn btn--tonal btn--small" data-sql="show sinks;" type="button">show sinks</button>
+        <button class="btn btn--tonal btn--small" data-sql="show internal tables;" type="button">show internal tables</button>
+      </div>
+    </aside>
+
+    <div class="playground__work">
+      <label class="playground__label" for="sql-input">SQL</label>
+      <textarea id="sql-input" class="sql-input" spellcheck="false" rows="10"
+        placeholder="create table t (id int, ts timestamptz, v int, watermark for ts as ts - interval '5' second) append only;&#10;&#10;create materialized view m as select * from t match_recognize (...);&#10;&#10;select * from m;"></textarea>
+      <div class="playground__actions">
+        <button id="btn-sql-run" class="btn btn--filled" type="button">run SQL</button>
+        <span class="playground__kbd">⌘/Ctrl + Enter</span>
+        <button id="btn-sql-clear" class="btn btn--outlined" type="button">clear</button>
+      </div>
+      <div id="sql-results" class="correctness__results" aria-live="polite">
+        <p class="view__lead">
+          Statements run one at a time, in order; every result set comes back as a table, and any
+          materialized view you create also shows the streaming plan it compiled to.
+        </p>
+      </div>
     </div>
   </section>
 

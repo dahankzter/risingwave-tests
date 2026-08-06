@@ -1202,3 +1202,156 @@ input[type='range']::-moz-range-thumb {
   font-size: 0.6875rem;
   color: var(--md-sys-color-on-surface-variant);
 }
+
+/* A compact variant for the playground's shortcut row, where six buttons share a narrow column
+   and full-size targets would wrap into a tall stack. */
+.btn--small {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 0.75rem;
+}
+
+/* ---- Playground tab ------------------------------------------------------ */
+/* Same split as the correctness tab, and for the same reason: the left column is consulted
+   occasionally, the right column is read constantly. */
+.playground {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
+  gap: var(--space-4, 1rem);
+  padding: var(--space-4, 1rem);
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .playground {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.playground__catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--md-sys-shape-corner-m, 12px);
+  background: var(--md-sys-color-surface-container);
+  position: sticky;
+  top: 12px;
+  /* The catalog grows with the cluster; cap it and scroll rather than push the editor down the
+     page, which is the one thing that must stay reachable. */
+  max-height: calc(100vh - 10rem);
+  overflow-y: auto;
+}
+
+.playground__catalog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.playground__heading {
+  margin: 0;
+  font-size: var(--md-sys-typescale-title-medium-size, 1rem);
+}
+
+.playground__hint {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.catalog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.catalog-list__kind {
+  margin: 10px 0 2px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.catalog-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--md-sys-color-on-surface);
+}
+
+.catalog-item:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.playground__shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.playground__work {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.playground__label {
+  font-size: var(--md-sys-typescale-label-medium-size, 0.75rem);
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sql-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 12px 14px;
+  border-radius: var(--md-sys-shape-corner-m, 12px);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  /* Tabs in SQL are for alignment, so keep them narrow rather than the browser's 8. */
+  tab-size: 2;
+}
+
+.sql-input:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
+}
+
+.playground__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.playground__kbd {
+  font-size: 0.6875rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* A statement that succeeded without a result set. Green, because in the playground the question
+   is "did that work", and the answer deserves to be readable at a glance. */
+.result-card__status {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--bench-good);
+}

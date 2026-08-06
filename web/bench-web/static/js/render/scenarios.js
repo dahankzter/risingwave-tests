@@ -14,13 +14,23 @@ function el(tag, className, text) {
   return node;
 }
 
-/** One step: the expectation the check states, then what came back. */
-function renderBlock(block, index) {
+/** A scenario step's caption: the assertion the file states. The files already phrase these as
+ * "expect: …", so a duplicated prefix is stripped rather than printed as "expect: expect: …". */
+const expectCaption = (block, index) =>
+  `expect ${(block.expect ?? `step ${index + 1}`).replace(/^expect:\s*/i, '')}`;
+
+/** A playground statement's caption: what it was, not what it should prove. */
+export const statementCaption = (block, index) => block.expect ?? `statement ${index + 1}`;
+
+/** One step: its caption, then what came back.
+ *
+ * The caption is caller-supplied because the two callers mean different things by it. A scenario
+ * step carries an assertion, so "expect no rows" is the honest heading. A statement typed in the
+ * playground asserts nothing — captioning it "expect …" would invent an assertion the user never
+ * made and turn a plain query result into an apparent verdict. */
+function renderBlock(block, index, caption) {
   const card = el('section', 'result-card');
-  // The scenario files already phrase these as "expect: …"; strip a duplicated prefix rather than
-  // print "expect: expect: …".
-  const label = (block.expect ?? `step ${index + 1}`).replace(/^expect:\s*/i, '');
-  card.append(el('h3', 'result-card__expect', `expect ${label}`));
+  card.append(el('h3', 'result-card__expect', caption(block, index)));
 
   if (block.error) {
     const err = el('p', 'result-card__error', block.error);
@@ -54,6 +64,13 @@ function renderBlock(block, index) {
     return card;
   }
 
+  // A statement with no result set: DDL, an insert, a flush. Reported so the playground accounts
+  // for every line the user typed rather than skipping the ones that worked quietly.
+  if (block.status) {
+    card.append(el('p', 'result-card__status', block.status));
+    return card;
+  }
+
   if (block.rows.length === 0) {
     // "Nothing was emitted" is frequently the assertion itself — a held match, a rejected
     // pattern — so it is stated, not left as an empty frame.
@@ -83,6 +100,13 @@ function renderBlock(block, index) {
   return card;
 }
 
+/** Append a run's blocks to a host. Exported so the playground tab renders hand-written SQL the
+ * same way a bundled scenario renders — a `select`'s rows and a view's plan look the same wherever
+ * the statement came from. */
+export function renderBlocks(host, blocks, caption = expectCaption) {
+  for (const [i, block] of blocks.entries()) host.append(renderBlock(block, i, caption));
+}
+
 function renderResults(dom, name, result) {
   const host = dom.scenarioResults;
   host.textContent = '';
@@ -94,7 +118,7 @@ function renderResults(dom, name, result) {
   head.append(title, verdict);
   host.append(head);
 
-  for (const [i, block] of result.blocks.entries()) host.append(renderBlock(block, i));
+  renderBlocks(host, result.blocks, expectCaption);
 }
 
 function renderRunning(dom, name) {

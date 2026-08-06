@@ -98,16 +98,23 @@ cd web && cargo run --release -p bench-web     # then open http://127.0.0.1:3000
 cargo run --release -p bench-web -- --pin      # partition the cores first (see below)
 ```
 
-Three tabs over the same cluster:
+Four tabs over the same cluster:
 
 - **live** — the alert feed, rows/s and alerts/s dials, and the latency chart.
 - **correctness** — a check picker with the prose its scenario file opens with, and its results as
   tables on the right. Each materialized view a check creates also yields a **show graph** toggle:
   the streaming plan it compiles to, as an operator tree with `StreamMatchRecognize` and
   `StreamWatermarkSort` highlighted — the ordering/matching split, visible on the machine rather
-  than described. each showing the prose its scenario file opens
-  These build their own tables and drop them again; they share nothing with the load, so running
-  one mid-load disturbs neither.
+  than described. These checks build their own tables and drop them again; they share nothing with
+  the load, so running one mid-load disturbs neither.
+- **playground** — arbitrary SQL against the same cluster, for the questions a fixed scenario set
+  cannot answer. The left column lists your tables, views, sources and sinks (click one to
+  `describe` it) plus `show tables` / `show materialized views` / `show sources` / `show sinks` /
+  `show internal tables` shortcuts; the right column is an editor (⌘/Ctrl+Enter runs) over the same
+  results renderer the correctness tab uses. Statements run one at a time in order, so a failure
+  names the statement that failed; every materialized view you create gets the same **show graph**
+  plan tree. Note that RisingWave's internal state tables and the pg_catalog compatibility views
+  are omitted from the list — `show internal tables` reaches the former when you want them.
 - **details** — latency and throughput, the operator metrics, pipeline state, and the run
   environment (which labels its own trustworthiness).
 
