@@ -525,9 +525,20 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
+#[derive(Serialize)]
+struct ScenarioInfo {
+    name: String,
+    /// The prose the scenario file itself opens with — see `embedded::leading_comment`.
+    description: String,
+}
+
 /// The scenarios the console can run: the correctness half of a demo, next to the throughput half.
 async fn scenario_list() -> Response {
-    Json(crate::embedded::scenario_names()).into_response()
+    let list: Vec<ScenarioInfo> = crate::embedded::scenario_docs()
+        .into_iter()
+        .map(|(name, description)| ScenarioInfo { name, description })
+        .collect();
+    Json(list).into_response()
 }
 
 #[derive(Deserialize)]

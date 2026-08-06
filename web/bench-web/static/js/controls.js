@@ -4,15 +4,6 @@
 // and the clean endpoint's 400 (wrong/missing confirmation) must read as real messages, not a
 // console-only failure.
 
-/** Render a scenario transcript into its panel. */
-function showScenario(dom, name, lines, ok) {
-  if (!dom.scenarioPanel) return;
-  dom.scenarioPanel.hidden = false;
-  dom.scenarioTitle.textContent = ok == null ? name : `${name} — ${ok ? 'ran' : 'failed'}`;
-  dom.scenarioTitle.dataset.state = ok == null ? 'unknown' : ok ? 'good' : 'bad';
-  dom.scenarioOutput.textContent = lines.join('\n');
-}
-
 export function wireControls(dom, api, showMessage) {
   const disableWhile = (btn, fn) => async () => {
     btn.disabled = true;
@@ -37,38 +28,6 @@ export function wireControls(dom, api, showMessage) {
     disableWhile(dom.btnPipelineRebuild, () => {
       const raw = dom.latenessSelect?.value ?? '';
       return api.pipelineRebuild(raw === '' ? null : Number(raw));
-    }),
-  );
-
-  // Scenarios: the correctness half of a demo. Populated once at startup; running one prints its
-  // transcript, including the scenario's own `\echo` expectations, so the panel reads as
-  // "expected X, got Y" rather than a bare pass/fail.
-  if (dom.scenarioSelect) {
-    api.scenarioList().then((names) => {
-      dom.scenarioSelect.textContent = '';
-      for (const name of names) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name.replace(/_/g, ' ');
-        dom.scenarioSelect.append(opt);
-      }
-      if (names.length === 0) {
-        const opt = document.createElement('option');
-        opt.textContent = 'none embedded';
-        dom.scenarioSelect.append(opt);
-      }
-    });
-  }
-
-  dom.btnScenarioRun?.addEventListener(
-    'click',
-    disableWhile(dom.btnScenarioRun, async () => {
-      const name = dom.scenarioSelect?.value;
-      if (!name) return { ok: false, status: 0, message: 'no scenario selected' };
-      showScenario(dom, name, ['running…'], null);
-      const { ok, body } = await api.scenarioRun(name);
-      showScenario(dom, name, body?.output ?? ['(no output)'], body?.ok ?? ok);
-      return { ok, status: ok ? 200 : 500, message: ok ? 'ok' : 'scenario failed' };
     }),
   );
 

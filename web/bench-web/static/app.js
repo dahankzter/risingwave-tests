@@ -12,6 +12,7 @@ import { renderLatencyChart } from './js/render/chart.js';
 import { renderConnectionBadge, renderStatus, renderMetrics, renderLateness } from './js/render/status.js';
 import { renderLog } from './js/render/log.js';
 import { wireDetails } from './js/render/details.js';
+import { renderScenarioList } from './js/render/scenarios.js';
 
 // A genuinely uncaught exception (a bug in a render callback, say) must not fail silently the
 // way a dropped WebSocket must not: surface it on the page itself, in the same log strip used for
@@ -50,8 +51,7 @@ const dom = {
   latenessSelect: document.getElementById('lateness-select'),
   chipLateness: document.getElementById('chip-lateness'),
   statusLateness: document.getElementById('status-lateness'),
-  scenarioSelect: document.getElementById('scenario-select'),
-  btnScenarioRun: document.getElementById('btn-scenario-run'),
+  scenarioList: document.getElementById('scenario-list'),
   btnScenarioClose: document.getElementById('btn-scenario-close'),
   scenarioPanel: document.getElementById('scenario-panel'),
   scenarioTitle: document.getElementById('scenario-title'),
@@ -155,6 +155,32 @@ wireControls(dom, api, showMessage);
 // The details tab is self-wiring: it owns its toggle, its own poll timer (only while visible),
 // and its own store subscriptions.
 wireDetails(store);
+
+// Tabs: one visible view at a time. The details tab keeps its own polling — see details.js — so
+// switching away from it stops that work rather than leaving it running behind a hidden panel.
+const TABS = [
+  ['tab-live', 'view-live'],
+  ['tab-correctness', 'view-correctness'],
+  ['tab-details', 'view-details'],
+];
+function selectTab(activeId) {
+  for (const [tabId, viewId] of TABS) {
+    const tab = document.getElementById(tabId);
+    const view = document.getElementById(viewId);
+    if (!tab || !view) continue;
+    const active = tabId === activeId;
+    tab.setAttribute('aria-selected', String(active));
+    view.hidden = !active;
+  }
+}
+for (const [tabId] of TABS) {
+  document.getElementById(tabId)?.addEventListener('click', () => selectTab(tabId));
+}
+selectTab('tab-live');
+
+// The check cards, built once from the server's list (name + the prose each scenario file opens
+// with).
+api.scenarioList().then((scenarios) => renderScenarioList(dom, api, scenarios, showMessage));
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
 /** The two header renderers that share a trigger: a status event carries the live lateness, and

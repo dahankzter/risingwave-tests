@@ -55,14 +55,6 @@
         time 3 test alerts
       </button>
 
-      <span class="divider" aria-hidden="true"></span>
-
-      <label class="select-control" title="Run a correctness scenario against this cluster and read its transcript: each query with the rows it returned, next to what the scenario expected.">
-        correctness check
-        <select id="scenario-select"><option value="">loading&hellip;</option></select>
-      </label>
-      <button id="btn-scenario-run" class="btn btn--tonal" type="button">run check</button>
-      <button id="btn-details" class="btn btn--tonal" type="button" aria-expanded="false" aria-controls="details-panel">details</button>
 
       <span class="divider" aria-hidden="true"></span>
 
@@ -72,7 +64,16 @@
 
   <div id="log-strip" class="log-strip" aria-live="polite"></div>
 
-  <main class="layout">
+  <!-- Three views over the same cluster: what it is doing now, whether it is right, and the
+       numbers with their caveats. Tabs rather than disclosure panels because "is it correct" is a
+       peer of "is it fast", not a footnote to it. -->
+  <nav class="tabs" role="tablist" aria-label="views">
+    <button class="tab" role="tab" id="tab-live" aria-controls="view-live" aria-selected="true">live</button>
+    <button class="tab" role="tab" id="tab-correctness" aria-controls="view-correctness" aria-selected="false">correctness</button>
+    <button class="tab" role="tab" id="tab-details" aria-controls="view-details" aria-selected="false">details</button>
+  </nav>
+
+  <main class="layout view" id="view-live" role="tabpanel" aria-labelledby="tab-live">
     <section class="feed-panel" aria-label="alert feed">
       <div class="feed-panel__header">
         <h2 class="feed-panel__title">alerts</h2>
@@ -125,19 +126,27 @@
     </aside>
   </main>
 
-  <section id="scenario-panel" class="scenario" hidden aria-label="scenario transcript">
-    <div class="scenario__head">
-      <h2 id="scenario-title" class="scenario__title">correctness check</h2>
-      <button id="btn-scenario-close" class="btn btn--outlined" type="button">close</button>
-    </div>
-    <p class="scenario__hint">
-      Lines beginning <code>--</code> are the scenario's own expectations; the rows beneath each
-      are what this cluster actually returned.
+  <section class="view" id="view-correctness" role="tabpanel" aria-labelledby="tab-correctness" hidden>
+    <p class="view__lead">
+      Each check builds its own tiny table, feeds it a handful of hand-chosen rows, asserts what
+      MATCH_RECOGNIZE should emit, and drops everything again. They share nothing with the load —
+      running one mid-load disturbs neither.
     </p>
-    <pre id="scenario-output" class="scenario__output"></pre>
+    <div id="scenario-list" class="scenario-list"></div>
+    <section id="scenario-panel" class="scenario" hidden aria-label="check transcript">
+      <div class="scenario__head">
+        <h2 id="scenario-title" class="scenario__title">transcript</h2>
+        <button id="btn-scenario-close" class="btn btn--outlined" type="button">close</button>
+      </div>
+      <p class="scenario__hint">
+        Lines beginning <code>--</code> are the check's own expectations; the rows beneath each are
+        what this cluster actually returned.
+      </p>
+      <pre id="scenario-output" class="scenario__output"></pre>
+    </section>
   </section>
 
-  <section id="details-panel" class="details" hidden aria-label="run details">
+  <section class="view details" id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden aria-label="run details">
     <div class="details__grid">
       <section class="card" aria-label="latency and throughput">
         <p class="card__label">latency &amp; throughput</p>

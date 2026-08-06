@@ -98,9 +98,18 @@ cd web && cargo run --release -p bench-web     # then open http://127.0.0.1:3000
 cargo run --release -p bench-web -- --pin      # partition the cores first (see below)
 ```
 
-Cluster up/down, pipeline rebuild, load start/stop with a live rate slider, the alert feed, rate
-gauges, a latency chart, and a **details** tab with four panels: latency and throughput, the
-operator metrics, pipeline state, and the run environment.
+Three tabs over the same cluster:
+
+- **live** — the alert feed, rows/s and alerts/s dials, and the latency chart.
+- **correctness** — one card per embedded check, each showing the prose its scenario file opens
+  with, a `run` button, and the transcript underneath. The card's edge goes green or red after a
+  run, so a page of cards reads as a checklist. These build their own tables and drop them again;
+  they share nothing with the load, so running one mid-load disturbs neither.
+- **details** — latency and throughput, the operator metrics, pipeline state, and the run
+  environment (which labels its own trustworthiness).
+
+The top bar keeps the cluster and load controls: up/down, pipeline rebuild with the watermark
+lateness selector, load start/stop with a live rate slider, and the end-to-end timing check.
 
 The top bar also carries two demo levers:
 

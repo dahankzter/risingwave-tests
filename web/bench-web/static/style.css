@@ -951,3 +951,87 @@ input[type='range']::-moz-range-thumb {
 .scenario__hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* ---- Tabs ---------------------------------------------------------------- */
+/* Three peer views. "Is it correct" sits beside "is it fast" rather than under it — a disclosure
+   panel would have implied the correctness checks are a footnote. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 var(--space-4, 1rem);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--md-sys-color-on-surface-variant);
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: var(--md-sys-color-on-surface);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--md-sys-color-primary);
+  border-bottom-color: var(--md-sys-color-primary);
+  font-weight: 600;
+}
+
+.view__lead {
+  margin: 0 0 var(--space-4, 1rem);
+  max-width: 60ch;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--md-sys-typescale-body-medium-size, 0.875rem);
+}
+
+#view-correctness {
+  padding: var(--space-4, 1rem);
+}
+
+/* ---- Check cards -------------------------------------------------------- */
+.scenario-list {
+  display: grid;
+  gap: var(--space-4, 1rem);
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  margin-bottom: var(--space-4, 1rem);
+}
+
+.check-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--md-sys-shape-corner-m, 12px);
+  background: var(--md-sys-color-surface-container);
+  /* The result colours the card's edge, so a page of cards reads as a checklist after a run. */
+  border-left: 3px solid transparent;
+}
+
+.check-card[data-state='good'] { border-left-color: var(--bench-good); }
+.check-card[data-state='bad'] { border-left-color: var(--bench-bad); }
+
+.check-card__title {
+  margin: 0;
+  font-size: var(--md-sys-typescale-title-small-size, 0.875rem);
+  color: var(--md-sys-color-on-surface);
+}
+
+.check-card__body {
+  margin: 0;
+  flex: 1;
+  font-size: var(--md-sys-typescale-body-small-size, 0.75rem);
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.check-card__run {
+  margin-top: 4px;
+}

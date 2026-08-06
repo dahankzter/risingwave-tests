@@ -49,6 +49,36 @@ pub fn scenario_names() -> Vec<String> {
     names
 }
 
+/// A scenario's name alongside the prose it opens with, for the correctness tab.
+pub fn scenario_docs() -> Vec<(String, String)> {
+    scenario_names()
+        .into_iter()
+        .map(|name| {
+            let description = scenario_sql(&name).as_deref().map(leading_comment).unwrap_or_default();
+            (name, description)
+        })
+        .collect()
+}
+
+/// The leading `--` comment block of a scenario, as a paragraph. Each scenario file already opens
+/// by explaining what it proves; reading that instead of keeping a second copy in the UI means the
+/// page and the file can never disagree.
+pub fn leading_comment(sql: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for line in sql.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("--") {
+            out.push(rest.trim());
+        } else if trimmed.is_empty() && out.is_empty() {
+            continue; // leading blank lines before the block
+        } else {
+            break; // first non-comment line ends the block
+        }
+    }
+    // Blank comment lines separate paragraphs in these files; collapse each run into one break.
+    out.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// One scenario's SQL. `None` for a name that is not embedded — the caller turns that into a 404
 /// rather than trusting a name off the wire to reach the filesystem.
 pub fn scenario_sql(name: &str) -> Option<String> {
@@ -91,6 +121,22 @@ mod tests {
         );
         assert!(scenario_sql("preference_supersession").is_some());
         assert!(scenario_sql("../../../etc/passwd").is_none(), "names must not escape the bundle");
+    }
+
+    #[test]
+    fn every_scenario_carries_its_own_explanation() {
+        for (name, description) in scenario_docs() {
+            assert!(
+                description.len() > 40,
+                "{name} should open with a comment block explaining what it proves, got {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_leading_comment_stops_at_the_first_statement() {
+        let doc = leading_comment("-- one\n-- two\nselect 1;\n-- not this\n");
+        assert_eq!(doc, "one two");
     }
 
     #[test]
