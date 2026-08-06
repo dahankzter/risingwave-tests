@@ -74,7 +74,9 @@ export class Store extends EventTarget {
   _pushAlert(ev) {
     this.feed.unshift(ev);
     if (this.feed.length > FEED_CAPACITY) this.feed.length = FEED_CAPACITY;
-    this.dispatchEvent(new CustomEvent('feed'));
+    // `fromSnapshot: false` — a genuine live arrival, the one case the feed's entrance animation
+    // should play for (see render/feed.js's rowFor).
+    this.dispatchEvent(new CustomEvent('feed', { detail: { fromSnapshot: false } }));
   }
 
   _pushStats(ev) {
@@ -97,7 +99,10 @@ export class Store extends EventTarget {
       this.statsHistory = [ev.stats];
     }
     this.dispatchEvent(new CustomEvent('status'));
-    this.dispatchEvent(new CustomEvent('feed'));
+    // `fromSnapshot: true` — these rows are history being restored (initial connect, or a lag
+    // resync), not something happening live in front of the viewer, so they must not animate in;
+    // see render/feed.js's rowFor for why that distinction is the actual fix, not just polish.
+    this.dispatchEvent(new CustomEvent('feed', { detail: { fromSnapshot: true } }));
     this.dispatchEvent(new CustomEvent('stats'));
   }
 }

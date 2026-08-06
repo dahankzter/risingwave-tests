@@ -12,6 +12,25 @@ import { renderLatencyChart } from './js/render/chart.js';
 import { renderConnectionBadge, renderStatus, renderMetrics } from './js/render/status.js';
 import { renderLog } from './js/render/log.js';
 
+// A genuinely uncaught exception (a bug in a render callback, say) must not fail silently the
+// way a dropped WebSocket must not: surface it on the page itself, in the same log strip used for
+// server `Log` events and control-call results, rather than only in a devtools console nobody at
+// the demo is looking at.
+window.addEventListener('error', (e) => {
+  const strip = document.getElementById('log-strip');
+  if (strip) {
+    strip.textContent = `[error] ${e.message} (${e.filename}:${e.lineno}:${e.colno})`;
+    strip.dataset.level = 'error';
+  }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const strip = document.getElementById('log-strip');
+  if (strip) {
+    strip.textContent = `[error] unhandled rejection: ${e.reason}`;
+    strip.dataset.level = 'error';
+  }
+});
+
 const dom = {
   connBadge: document.getElementById('conn-badge'),
   statusCluster: document.getElementById('status-cluster'),
@@ -62,8 +81,8 @@ store.addEventListener('status', () =>
   renderStatus({ clusterEl: dom.statusCluster, pipelineEl: dom.statusPipeline, loadEl: dom.statusLoad }, store.status),
 );
 
-store.addEventListener('feed', () => {
-  renderFeed(dom.feedList, store.feed);
+store.addEventListener('feed', (ev) => {
+  renderFeed(dom.feedList, store.feed, !ev.detail.fromSnapshot);
   renderFeedCaption(dom.feedCaption, store.rate.alertsPerSecOut);
 });
 

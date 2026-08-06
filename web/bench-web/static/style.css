@@ -468,6 +468,19 @@ input[type='range']::-moz-range-thumb {
   margin-bottom: 6px;
   border-radius: var(--md-sys-shape-corner-m);
   background: var(--md-sys-color-surface-container-high);
+}
+
+/* Applied only to a row's first paint as a genuine live arrival (see rowFor in feed.js) — never
+ * to rows restored from a `Snapshot` (page load, or a lag resync), which are history being
+ * displayed, not something happening in front of the viewer right now. Scoping the animation to a
+ * dedicated modifier class, rather than putting it on `.feed-row` itself, is also what makes an
+ * *unchanged* row safe to reposition: moving an existing DOM node within `replaceChildren` doesn't
+ * restart a CSS animation, but recreating the node (the previous implementation's bug: it rebuilt
+ * and replaced every row on every tick) does — at a ~20 rows/s feed that meant the entire list was
+ * perpetually mid-fade, so any single paint (a freshly loaded page, a headless screenshot) had a
+ * good chance of landing on every row sitting at this animation's `opacity: 0` start state, i.e.
+ * looking completely empty. See the task report's fix-round notes for how this was found. */
+.feed-row--enter {
   animation: feed-row-in var(--md-sys-motion-duration-medium) var(--md-sys-motion-spring-default);
 }
 
