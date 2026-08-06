@@ -26,6 +26,7 @@ services:
     ports:
       - "4566:4566"   # SQL (pgwire)
       - "5690:5690"   # meta dashboard
+      - "1222:1222"   # compute-node Prometheus (operator metrics scrape)
     volumes:
       - rw-tests-data:/root/.risingwave
     healthcheck:

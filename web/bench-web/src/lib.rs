@@ -6,6 +6,8 @@ pub mod api;
 pub mod assets;
 pub mod embedded;
 pub mod event;
+pub mod metrics;
+pub mod pin;
 pub mod podman;
 pub mod probe;
 pub mod state;
@@ -32,7 +34,13 @@ pub fn app_router(state: Arc<AppState>) -> Router {
 /// `tests/api.rs`. Every assertion those tests make is reached before any handler touches the
 /// cluster driver or opens a connection, so the placeholder `db_url` is never dialed.
 pub fn router_for_test() -> Router {
-    let state = Arc::new(AppState::new(Arc::new(NullCluster), "postgres://unused/unused".to_string(), None));
+    let state = Arc::new(AppState::new(
+        Arc::new(NullCluster),
+        "postgres://unused/unused".to_string(),
+        "test-image".to_string(),
+        None,
+        None,
+    ));
     app_router(state)
 }
 
@@ -61,6 +69,8 @@ pub struct ServeConfig {
     pub db_url: String,
     pub container_name: String,
     pub image: String,
+    /// CPU layout to apply, or `None` to leave both sides unpinned (the default).
+    pub pin_layout: Option<pin::Layout>,
     /// `None` means use the SQL embedded into the binary at compile time (`embedded::setup_sql`)
     /// — CWD-independent. `Some` is an explicit override, e.g. to iterate on the SQL on disk
     /// without a rebuild.
@@ -71,9 +81,17 @@ pub struct ServeConfig {
 /// killed. Binding to anything other than loopback is allowed (`--bind` overrides the default),
 /// but `main` is responsible for the startup warning — this function only serves.
 pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
+    // Pin this process before anything spawns: the reader, aggregator and status poller inherit
+    // the affinity mask, so they land on the bench cores too.
+    if let Some(layout) = &cfg.pin_layout {
+        pin::apply_to_self(layout)?;
+    }
+    let cpuset = cfg.pin_layout.as_ref().and_then(|l| l.cluster.clone());
     let state = Arc::new(AppState::new(
-        Arc::new(PodmanDriver::new(cfg.container_name, cfg.image)),
+        Arc::new(PodmanDriver::new(cfg.container_name, cfg.image.clone()).with_cpuset(cpuset)),
         cfg.db_url.clone(),
+        cfg.image,
+        cfg.pin_layout,
         cfg.pipeline_sql,
     ));
 

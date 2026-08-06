@@ -82,6 +82,42 @@ aborts at startup (barrier recovery bootstrap crash).
   `--sentinel-partition`. Don't go looking for them.
 - `expected/` — recorded scenario output. This is what `make smoke` asserts against.
 
+## The demo console
+
+```sh
+cd web && cargo run --release -p bench-web     # then open http://127.0.0.1:3000
+cargo run --release -p bench-web -- --pin      # partition the cores first (see below)
+```
+
+Cluster up/down, pipeline rebuild, load start/stop with a live rate slider, the alert feed, rate
+gauges, a latency chart, and a **details** tab with four panels: latency and throughput, the
+operator metrics, pipeline state, and the run environment.
+
+Two things the console is deliberate about:
+
+- **Percentiles describe the current run.** Starting a load or rebuilding the pipeline resets the
+  measurement epoch (server-side `stats_reset`), because accumulating samples across runs put a
+  stale p95 two orders of magnitude above p50 — the first thing a reviewer would challenge.
+- **The environment panel labels its own trustworthiness.** Emulated (linux/amd64 container on a
+  non-x86 host), unpinned, or fewer than 8 cores, and the panel says "shape-check only" with the
+  reasons. A screenshot of a laptop run cannot circulate as a measurement.
+
+Operator metrics come from the compute node's Prometheus endpoint on port 1222 (published by
+`make up`, `compose.yaml` and the console's podman driver). They are **totals since cluster
+start** — the counters survive dropped and recreated pipelines.
+
+### CPU pinning
+
+`--pin` gives the cluster all cores but the last two, keeps those two for the bench process, and
+sets `streaming_parallelism` to match the cluster's cpuset — that last part is what buys the
+isolation, since RisingWave sizes its thread pools from the core count it detects and would
+otherwise spawn workers for cores it cannot use. `--cores-cluster` / `--cores-bench` override the
+layout (and imply `--pin`). Off by default: every number recorded here was measured unpinned.
+
+On Linux both halves apply (container cpuset + `sched_setaffinity`). On macOS only the container
+cpuset applies — the platform exposes affinity *hints*, not a cpuset — and the details tab says
+so rather than implying an isolation it does not have.
+
 ## Load & latency
 
 ```sh

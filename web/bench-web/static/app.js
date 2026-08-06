@@ -11,6 +11,7 @@ import { renderRowsGauge, renderAlertsGauge } from './js/render/gauges.js';
 import { renderLatencyChart } from './js/render/chart.js';
 import { renderConnectionBadge, renderStatus, renderMetrics } from './js/render/status.js';
 import { renderLog } from './js/render/log.js';
+import { wireDetails } from './js/render/details.js';
 
 // A genuinely uncaught exception (a bug in a render callback, say) must not fail silently the
 // way a dropped WebSocket must not: surface it on the page itself, in the same log strip used for
@@ -143,6 +144,9 @@ socket.connect();
 // ---- controls ---------------------------------------------------------------------------------
 
 wireControls(dom, api, showMessage);
+// The details tab is self-wiring: it owns its toggle, its own poll timer (only while visible),
+// and its own store subscriptions.
+wireDetails(store);
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
 renderConnectionBadge(dom.connBadge, store.connection);

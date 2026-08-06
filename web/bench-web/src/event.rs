@@ -39,6 +39,11 @@ pub enum Event {
         round: u32,
         latency_ms: u64,
     },
+    /// The measurement epoch rolled over (a load started or the pipeline was rebuilt): the
+    /// aggregator's percentiles restart so a run's numbers describe that run — accumulated
+    /// cross-run samples put a stale p95 two orders of magnitude above p50. Clients clear their
+    /// stats history on this.
+    StatsReset {},
     Snapshot {
         status: Box<Event>,
         recent: Vec<Event>,

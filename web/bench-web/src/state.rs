@@ -48,6 +48,12 @@ pub struct AppState {
     /// The live cluster's connection string. Used both to start a load and to open the dedicated
     /// connection `pipeline/rebuild` needs for the subscription drop and the setup SQL.
     pub db_url: String,
+    /// Image tag the podman driver runs — surfaced by `/api/env` so the details tab can show
+    /// exactly what a screenshot was measured against.
+    pub image: String,
+    /// CPU layout in effect, or `None` when pinning is off (the default). Also surfaced by
+    /// `/api/env`: a layout nobody can see is a layout nobody can check.
+    pub pin_layout: Option<crate::pin::Layout>,
     /// Override for where `pipeline/rebuild` finds `setup_realtime.sql`. `None` (the default) means
     /// use the copy embedded into the binary at compile time (see `embedded.rs`) — CWD-independent,
     /// so the server behaves the same whether it is launched from `web/` or the repo root. `Some`
@@ -67,7 +73,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(cluster: Arc<dyn Cluster>, db_url: String, pipeline_sql: Option<PathBuf>) -> Self {
+    pub fn new(
+        cluster: Arc<dyn Cluster>,
+        db_url: String,
+        image: String,
+        pin_layout: Option<crate::pin::Layout>,
+        pipeline_sql: Option<PathBuf>,
+    ) -> Self {
         let (tx, _rx) = broadcast::channel(1024);
         Self {
             run: tokio::sync::Mutex::new(None),
@@ -75,6 +87,8 @@ impl AppState {
             status: Mutex::new(Status::default()),
             cluster,
             db_url,
+            image,
+            pin_layout,
             pipeline_sql,
             probe_running: tokio::sync::Mutex::new(false),
             recent: Mutex::new(VecDeque::with_capacity(RECENT_CAPACITY)),
@@ -115,6 +129,12 @@ impl AppState {
 
     pub fn set_last_stats(&self, event: Event) {
         *self.last_stats.lock().expect("last_stats mutex poisoned") = Some(event);
+    }
+
+    /// Forget the last published percentiles: a new measurement epoch began, and a `Snapshot`
+    /// built after this must not hand new clients the previous run's numbers.
+    pub fn clear_last_stats(&self) {
+        *self.last_stats.lock().expect("last_stats mutex poisoned") = None;
     }
 
     pub fn last_stats_snapshot(&self) -> Option<Event> {

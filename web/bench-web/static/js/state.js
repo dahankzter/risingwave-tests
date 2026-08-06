@@ -54,6 +54,12 @@ export class Store extends EventTarget {
         };
         this.dispatchEvent(new CustomEvent('metrics'));
         break;
+      case 'stats_reset':
+        // New measurement epoch (load started / pipeline rebuilt): the chart restarts so its
+        // percentiles describe the current run.
+        this.statsHistory = [];
+        this.dispatchEvent(new CustomEvent('stats'));
+        break;
       case 'probe':
         this.dispatchEvent(new CustomEvent('probe', { detail: { round: ev.round, latencyMs: ev.latency_ms } }));
         break;

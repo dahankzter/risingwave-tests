@@ -49,11 +49,20 @@ pub trait Cluster: Send + Sync {
 pub struct PodmanDriver {
     name: String,
     image: String,
+    /// Cores the container may run on (`--cpuset-cpus`), when pinning is enabled. `None` means
+    /// unrestricted — the default, matching every number recorded in the README so far.
+    cpuset: Option<String>,
 }
 
 impl PodmanDriver {
     pub fn new(name: impl Into<String>, image: impl Into<String>) -> Self {
-        Self { name: name.into(), image: image.into() }
+        Self { name: name.into(), image: image.into(), cpuset: None }
+    }
+
+    /// Restrict the container to `cpuset` (a podman core list such as `"0-61"`).
+    pub fn with_cpuset(mut self, cpuset: Option<String>) -> Self {
+        self.cpuset = cpuset;
+        self
     }
 }
 
@@ -116,9 +125,14 @@ impl Cluster for PodmanDriver {
                 "1222:1222".into(),
                 "-v".into(),
                 format!("{DATA_VOLUME}:/root/.risingwave"),
-                self.image.clone(),
-                "single_node".into(),
             ];
+            let mut args = args;
+            if let Some(cpuset) = &self.cpuset {
+                args.push("--cpuset-cpus".into());
+                args.push(cpuset.clone());
+            }
+            args.push(self.image.clone());
+            args.push("single_node".into());
             run(&args).await
         })
     }

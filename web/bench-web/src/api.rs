@@ -28,6 +28,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/load/rate", post(load_rate))
         .route("/api/pipeline/rebuild", post(pipeline_rebuild))
         .route("/api/probe/start", post(probe_start))
+        .route("/api/env", get(env_info))
+        .route("/api/pipeline/stats", get(pipeline_stats))
 }
 
 fn err(code: StatusCode, msg: impl Into<String>) -> Response {
@@ -192,6 +194,10 @@ async fn load_start(State(state): State<Arc<AppState>>, Json(req): Json<LoadRequ
             *guard = Some(handle);
             drop(guard);
             state.set_status(|s| s.load = "running".to_string());
+            // New measurement epoch: percentiles must describe THIS run, not accumulate across
+            // runs (a rebuilt pipeline mid-run once put p95 at 26x p50 from stale samples).
+            state.clear_last_stats();
+            state.publish(Event::StatsReset {});
             state.publish(Event::Log { level: "info".to_string(), text: "load: started".to_string() });
             StatusCode::OK.into_response()
         }
@@ -294,6 +300,10 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
     }
 
     state.set_status(|s| s.pipeline = "rebuilt".to_string());
+    // The rebuild dropped and recreated the pipeline: everything measured before it belongs to a
+    // different world. Same epoch roll as load/start.
+    state.clear_last_stats();
+    state.publish(Event::StatsReset {});
     state.publish(Event::Log {
         level: "info".to_string(),
         text: "pipeline: rebuilt; alert reader will reconnect".to_string(),
@@ -337,4 +347,108 @@ async fn probe_start(State(state): State<Arc<AppState>>, Json(req): Json<ProbeRe
     tokio::spawn(crate::probe::run_probe(state.clone(), req.rounds, sentinel));
 
     StatusCode::OK.into_response()
+}
+
+/// What a screenshot of this console was actually measured on. The details tab renders this so a
+/// number cannot circulate without its caveats: an emulated or unpinned run is labelled as such
+/// right next to the percentiles.
+#[derive(Serialize)]
+struct EnvInfo {
+    image: String,
+    host_os: String,
+    host_arch: String,
+    cores: usize,
+    /// The container is always linux/amd64; on any other host arch it runs emulated and every
+    /// performance number is a shape-check, not a measurement.
+    emulated: bool,
+    pinned: bool,
+    pin_why: String,
+    trusted: bool,
+    reasons: Vec<String>,
+}
+
+async fn env_info(State(state): State<Arc<AppState>>) -> Response {
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
+    let host_arch = std::env::consts::ARCH.to_string();
+    let emulated = host_arch != "x86_64";
+    let (pinned, pin_why) = pin_status(&state);
+    let mut reasons = Vec::new();
+    if emulated {
+        reasons.push(format!("container is linux/amd64, host is {host_arch}: emulated run"));
+    }
+    if !pinned {
+        reasons.push("CPU unpinned: cluster and bench share cores".to_string());
+    }
+    if cores < 8 {
+        reasons.push(format!("only {cores} cores available"));
+    }
+    Json(EnvInfo {
+        image: state.image.clone(),
+        host_os: std::env::consts::OS.to_string(),
+        host_arch,
+        cores,
+        emulated,
+        pinned,
+        pin_why,
+        trusted: reasons.is_empty(),
+        reasons,
+    })
+    .into_response()
+}
+
+/// Pin layout in effect, for `/api/env`. Off by default: every number recorded so far was
+/// measured unpinned, so the flag must say which world a screenshot came from.
+fn pin_status(state: &AppState) -> (bool, String) {
+    match &state.pin_layout {
+        Some(l) => (
+            l.cluster.is_some(),
+            format!("{} — {}", crate::pin::platform_note(), l.why),
+        ),
+        None => (false, "pinning off (default; --pin enables it)".to_string()),
+    }
+}
+
+/// Approximate row counts for the pipeline-state panel, from `rw_table_stats` (storage-side key
+/// counts — cheap, no scans; approximate by design and labelled as such in the UI).
+#[derive(Serialize, Default)]
+struct PipelineStats {
+    base_rows: Option<i64>,
+    matches: Option<i64>,
+    alert_rows: Option<i64>,
+}
+
+async fn pipeline_stats(State(state): State<Arc<AppState>>) -> Response {
+    match fetch_pipeline_stats(&state.db_url).await {
+        Ok(stats) => Json(stats).into_response(),
+        // A down cluster is the ordinary case for this endpoint, not a 500: the tab shows dashes.
+        Err(_) => Json(PipelineStats::default()).into_response(),
+    }
+}
+
+async fn fetch_pipeline_stats(db_url: &str) -> anyhow::Result<PipelineStats> {
+    let (client, connection) = tokio_postgres::connect(db_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let rows = client
+        .query(
+            "select r.name, s.total_key_count \
+             from rw_catalog.rw_table_stats s \
+             join rw_catalog.rw_relations r on r.id = s.id \
+             where r.name in ('t_rt', 'mv_rt', 't_rt_alerts')",
+            &[],
+        )
+        .await?;
+    let mut stats = PipelineStats::default();
+    for row in rows {
+        let name: String = row.get(0);
+        let count: i64 = row.get(1);
+        match name.as_str() {
+            "t_rt" => stats.base_rows = Some(count),
+            "mv_rt" => stats.matches = Some(count),
+            "t_rt_alerts" => stats.alert_rows = Some(count),
+            _ => {}
+        }
+    }
+    Ok(stats)
 }

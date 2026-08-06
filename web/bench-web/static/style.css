@@ -707,3 +707,30 @@ input[type='range']::-moz-range-thumb {
     background: rgba(0, 0, 0, 0.6);
   }
 }
+
+/* ---- Details tab (Task 7) ------------------------------------------------ */
+/* A disclosure panel below the main layout rather than a route: the demo never navigates away
+   from the live feed, it just reveals the numbers underneath it. */
+.details {
+  padding: var(--space-4, 1rem);
+  border-top: 1px solid var(--m3-outline-variant, #cbc4cf);
+  background: var(--m3-surface-container-low, #f7f2f7);
+}
+
+.details__grid {
+  display: grid;
+  gap: var(--space-4, 1rem);
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+/* The trust caption is the honesty layer: green when the environment can carry a measurement,
+   amber when a screenshot of it must not circulate as one. */
+.card__caption[data-trust='ok'] {
+  color: var(--m3-primary, #6750a4);
+  font-weight: 600;
+}
+
+.card__caption[data-trust='warn'] {
+  color: var(--m3-error, #b3261e);
+  font-weight: 600;
+}

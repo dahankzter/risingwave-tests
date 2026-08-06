@@ -38,6 +38,7 @@
       <span class="divider" aria-hidden="true"></span>
 
       <button id="btn-probe-start" class="btn btn--tonal" type="button">probe (3 rounds)</button>
+      <button id="btn-details" class="btn btn--tonal" type="button" aria-expanded="false" aria-controls="details-panel">details</button>
 
       <span class="divider" aria-hidden="true"></span>
 
@@ -89,6 +90,54 @@
       </section>
     </aside>
   </main>
+
+  <section id="details-panel" class="details" hidden aria-label="run details">
+    <div class="details__grid">
+      <section class="card" aria-label="latency and throughput">
+        <p class="card__label">latency &amp; throughput</p>
+        <dl class="metrics-list">
+          <div><dt>p50</dt><dd id="det-p50">&mdash;</dd></div>
+          <div><dt>p95</dt><dd id="det-p95">&mdash;</dd></div>
+          <div><dt>p99</dt><dd id="det-p99">&mdash;</dd></div>
+          <div><dt>samples</dt><dd id="det-n">&mdash;</dd></div>
+          <div><dt>rows/s in</dt><dd id="det-rows">&mdash;</dd></div>
+          <div><dt>alerts/s out</dt><dd id="det-alerts">&mdash;</dd></div>
+        </dl>
+        <p class="card__caption">percentiles cover the current run (reset on start/rebuild)</p>
+      </section>
+
+      <section class="card" aria-label="operator metrics">
+        <p class="card__label">operator metrics</p>
+        <dl class="metrics-list">
+          <div><dt>matches emitted</dt><dd id="det-m-matches">&mdash;</dd></div>
+          <div><dt>rows evicted</dt><dd id="det-m-evicted">&mdash;</dd></div>
+          <div><dt>scan budget exhausted</dt><dd id="det-m-exhausted">&mdash;</dd></div>
+        </dl>
+        <p class="card__caption">totals since cluster start (counters survive dropped pipelines)</p>
+      </section>
+
+      <section class="card" aria-label="pipeline state">
+        <p class="card__label">pipeline state</p>
+        <dl class="metrics-list">
+          <div><dt>base rows</dt><dd id="det-p-base">&mdash;</dd></div>
+          <div><dt>matches</dt><dd id="det-p-matches">&mdash;</dd></div>
+          <div><dt>alert rows</dt><dd id="det-p-alerts">&mdash;</dd></div>
+        </dl>
+        <p class="card__caption">approximate storage key counts, refreshed while this tab is open</p>
+      </section>
+
+      <section class="card" aria-label="run environment">
+        <p class="card__label">run environment</p>
+        <dl class="metrics-list">
+          <div><dt>image</dt><dd id="det-e-image">&mdash;</dd></div>
+          <div><dt>host</dt><dd id="det-e-host">&mdash;</dd></div>
+          <div><dt>cores</dt><dd id="det-e-cores">&mdash;</dd></div>
+          <div><dt>pinning</dt><dd id="det-e-pin">&mdash;</dd></div>
+        </dl>
+        <p id="det-e-trust" class="card__caption"></p>
+      </section>
+    </div>
+  </section>
 
   <dialog id="clean-dialog" class="clean-dialog">
     <form method="dialog" id="clean-form">

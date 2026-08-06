@@ -54,7 +54,7 @@ help:
 # is untouched, so this costs nothing but a restart -- use `make clean` to actually drop state.
 up:
 	podman run -d --replace --name $(NAME) --platform linux/amd64 \
-		-p 4566:4566 -p 5690:5690 \
+		-p 4566:4566 -p 5690:5690 -p 1222:1222 \
 		-v rw-tests-data:/root/.risingwave \
 		$(RW_IMAGE) single_node
 	$(MAKE) wait

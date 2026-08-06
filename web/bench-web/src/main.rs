@@ -30,6 +30,20 @@ struct Cli {
     /// file on disk instead — e.g. to iterate on the SQL without rebuilding the binary.
     #[arg(long)]
     pipeline_sql: Option<PathBuf>,
+
+    /// Partition the cores: the cluster gets all but the last two, this process gets those two,
+    /// and `streaming_parallelism` is set to match the cluster's cpuset. Off by default — every
+    /// number in the README was measured unpinned, so enabling it changes what a run means.
+    #[arg(long)]
+    pin: bool,
+
+    /// Override the cluster's cpuset (implies `--pin`), e.g. `0-31`.
+    #[arg(long)]
+    cores_cluster: Option<String>,
+
+    /// Override the bench's cpuset (implies `--pin`), e.g. `62-63`.
+    #[arg(long)]
+    cores_bench: Option<String>,
 }
 
 #[tokio::main]
@@ -44,12 +58,43 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let pin_layout = resolve_pinning(&cli)?;
+    if let Some(l) = &pin_layout {
+        println!("bench-web: {}", l.why);
+    }
+
     bench_web::serve(ServeConfig {
         bind: cli.bind,
         db_url: cli.url,
         container_name: cli.container_name,
         image: cli.image,
+        pin_layout,
         pipeline_sql: cli.pipeline_sql,
     })
     .await
+}
+
+/// `--cores-*` overrides imply `--pin`; the automatic layout comes from the usable core count.
+/// An override is validated here rather than at first use, so a typo fails at startup instead of
+/// when someone presses "cluster up" in front of an audience.
+fn resolve_pinning(cli: &Cli) -> anyhow::Result<Option<bench_web::pin::Layout>> {
+    use bench_web::pin;
+
+    let overridden = cli.cores_cluster.is_some() || cli.cores_bench.is_some();
+    if !cli.pin && !overridden {
+        return Ok(None);
+    }
+    let mut layout = pin::plan(pin::usable_cores());
+    if let Some(spec) = &cli.cores_cluster {
+        let cores = pin::parse_range(spec)?;
+        layout.parallelism = Some(cores.len() as u32);
+        layout.cluster = Some(spec.clone());
+        layout.why = format!("cluster cpuset overridden to {spec} ({} cores)", cores.len());
+    }
+    if let Some(spec) = &cli.cores_bench {
+        pin::parse_range(spec)?;
+        layout.bench = Some(spec.clone());
+        layout.why = format!("{}; bench cpuset overridden to {spec}", layout.why);
+    }
+    Ok(Some(layout))
 }

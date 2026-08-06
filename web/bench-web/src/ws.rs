@@ -175,6 +175,14 @@ async fn aggregator_loop(state: Arc<AppState>) {
                     alerts_out.record(Instant::now(), 1);
                     state.record_alert(event);
                 }
+                Ok(Event::StatsReset {}) => {
+                    // A run (or rebuilt pipeline) started: percentiles restart so they describe
+                    // the new measurement epoch. Alerts already in flight from the old world may
+                    // still trickle in and land in the new epoch — acceptable noise at the very
+                    // start of a run, unlike a lifetime of stale samples.
+                    latencies = Latencies::new();
+                    alerts_out = RateWindow::new(RATE_WINDOW);
+                }
                 Ok(_) => {}
                 // The aggregator lagging just means some events were skipped this tick; it has
                 // no client-facing socket to resync, so it simply keeps accumulating from here.
@@ -207,8 +215,14 @@ async fn aggregator_loop(state: Arc<AppState>) {
                 }
             }
             _ = metrics_tick.tick() => {
-                // No source yet — see METRICS_TICK's doc comment. The tick stays wired so
-                // Task 7 only has to add the publish, not the scaffolding.
+                // Unreachable endpoint (cluster down) is a normal state: skip quietly.
+                if let Some(t) = crate::metrics::scrape("127.0.0.1:1222").await {
+                    state.publish(Event::Metrics {
+                        matches_emitted: t.matches_emitted,
+                        evicted_rows: t.evicted_rows,
+                        scan_budget_exhausted: t.scan_budget_exhausted,
+                    });
+                }
             }
         }
     }
