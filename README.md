@@ -101,10 +101,13 @@ cargo run --release -p bench-web -- --pin      # partition the cores first (see 
 Three tabs over the same cluster:
 
 - **live** — the alert feed, rows/s and alerts/s dials, and the latency chart.
-- **correctness** — one card per embedded check, each showing the prose its scenario file opens
-  with, a `run` button, and the transcript underneath. The card's edge goes green or red after a
-  run, so a page of cards reads as a checklist. These build their own tables and drop them again;
-  they share nothing with the load, so running one mid-load disturbs neither.
+- **correctness** — a check picker with the prose its scenario file opens with, and its results as
+  tables on the right. Each materialized view a check creates also yields a **show graph** toggle:
+  the streaming plan it compiles to, as an operator tree with `StreamMatchRecognize` and
+  `StreamWatermarkSort` highlighted — the ordering/matching split, visible on the machine rather
+  than described. each showing the prose its scenario file opens
+  These build their own tables and drop them again; they share nothing with the load, so running
+  one mid-load disturbs neither.
 - **details** — latency and throughput, the operator metrics, pipeline state, and the run
   environment (which labels its own trustworthiness).
 

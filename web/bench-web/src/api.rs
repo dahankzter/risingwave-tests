@@ -557,6 +557,70 @@ struct ScenarioBlock {
     rows: Vec<Vec<String>>,
     /// Set when the statement failed; the page shows it in place of a table.
     error: Option<String>,
+    /// A streaming plan, when this block describes one: the operator tree the check's view compiles
+    /// to. Captured for every materialized view a check creates, because that tree IS the feature
+    /// under discussion — MATCH_RECOGNIZE over a WatermarkSort over a hash exchange.
+    plan: Option<Vec<PlanNode>>,
+}
+
+/// One operator in a streaming plan. RisingWave prints the tree with `└─` prefixes; the depth is
+/// parsed out here so the page can lay it out as a tree instead of re-parsing box-drawing glyphs.
+#[derive(Serialize)]
+struct PlanNode {
+    depth: usize,
+    /// Operator name, e.g. `StreamMatchRecognize`.
+    op: String,
+    /// Everything inside the braces, or empty.
+    detail: String,
+}
+
+/// Parse `EXPLAIN CREATE MATERIALIZED VIEW`'s output into depth-tagged nodes. Two spaces of
+/// indentation per level in RisingWave's renderer; the `└─`/`├─` glyphs mark a child.
+fn parse_plan(text: &str) -> Vec<PlanNode> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let indent = line.chars().take_while(|c| *c == ' ').count();
+            let body = line.trim_start().trim_start_matches(['└', '├', '─']).trim();
+            if body.is_empty() {
+                return None;
+            }
+            let (op, detail) = match body.split_once('{') {
+                Some((op, rest)) => (op.trim().to_owned(), rest.trim_end_matches('}').trim().to_owned()),
+                None => (body.to_owned(), String::new()),
+            };
+            Some(PlanNode { depth: indent / 2, op, detail })
+        })
+        .collect()
+}
+
+/// The view name and inner query of a `create materialized view <name> as <query>` statement, so
+/// its plan can be explained while the tables it reads still exist — a check drops everything on
+/// its way out, so this cannot be done afterwards.
+fn materialized_view_query(stmt: &str) -> Option<(String, String)> {
+    let lower = stmt.to_lowercase();
+    let head = lower.find("create materialized view")? + "create materialized view".len();
+    let rest = &stmt[head..];
+
+    // Find the `AS` keyword as a TOKEN. Substring searches do not work here: `" as "` misses
+    // `as\nselect` (these files wrap the line), and any later match swallows the query into the
+    // name because MEASURES aliases contain `as` too.
+    let mut offset = 0usize;
+    let mut name: Option<&str> = None;
+    for token in rest.split_whitespace() {
+        let at = rest[offset..].find(token)? + offset;
+        if token.eq_ignore_ascii_case("as") {
+            let n = name?;
+            let query = rest[at + token.len()..].trim().trim_end_matches(';').to_owned();
+            if n.is_empty() || query.is_empty() {
+                return None;
+            }
+            return Some((n.to_owned(), query));
+        }
+        name = Some(token);
+        offset = at + token.len();
+    }
+    None
 }
 
 #[derive(Serialize)]
@@ -615,6 +679,7 @@ async fn scenario_run(
                                 columns,
                                 rows: rows.iter().map(row_cells).collect(),
                                 error: None,
+                                plan: None,
                             });
                         }
                         Err(e) => {
@@ -635,6 +700,27 @@ async fn scenario_run(
                         ..Default::default()
                     });
                     break;
+                } else if let Some((name, query)) = materialized_view_query(&stmt) {
+                    // Explain it now, while its inputs exist. A failure here is not the check
+                    // failing — the view was created successfully — so it is recorded and stepped
+                    // over rather than aborting the run.
+                    if let Ok(rows) =
+                        client.query(&format!("explain create materialized view _plan_{name} as {query}"), &[]).await
+                    {
+                        let text = rows
+                            .iter()
+                            .filter_map(|r| r.try_get::<_, Option<String>>(0).ok().flatten())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let nodes = parse_plan(&text);
+                        if !nodes.is_empty() {
+                            blocks.push(ScenarioBlock {
+                                expect: Some(format!("plan for {name}")),
+                                plan: Some(nodes),
+                                ..Default::default()
+                            });
+                        }
+                    }
                 }
             }
         }

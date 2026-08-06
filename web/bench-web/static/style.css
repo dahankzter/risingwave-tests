@@ -1150,3 +1150,53 @@ input[type='range']::-moz-range-thumb {
   color: var(--md-sys-color-on-surface-variant);
   font-style: italic;
 }
+
+/* ---- Plan trees ---------------------------------------------------------- */
+/* The operator tree a check's view compiles to. Indentation carries the parent/child relation,
+   which is enough of a graph for a tree this shallow — a force-directed layout would be harder to
+   read, not easier. */
+.result-card__toggle {
+  padding: 4px 12px;
+  font-size: 0.75rem;
+}
+
+.plan-tree {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.plan-node {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--md-sys-shape-corner-s, 8px);
+  background: var(--md-sys-color-surface-container-high);
+  border-left: 2px solid var(--md-sys-color-outline-variant);
+  white-space: nowrap;
+}
+
+/* The two operators the PR is about: the matcher, and the sort that feeds it ordered rows. */
+.plan-node[data-highlight='true'] {
+  border-left-color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 12%, var(--md-sys-color-surface-container-high));
+}
+
+.plan-node__op {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--md-sys-color-on-surface);
+}
+
+.plan-node[data-highlight='true'] .plan-node__op {
+  color: var(--md-sys-color-primary);
+}
+
+.plan-node__detail {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  color: var(--md-sys-color-on-surface-variant);
+}

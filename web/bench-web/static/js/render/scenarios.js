@@ -28,6 +28,32 @@ function renderBlock(block, index) {
     return card;
   }
 
+  // A plan block: the operator tree the check's view compiles to. Collapsed by default — it is
+  // the answer to "how does this work", not to "did it pass" — and the one worth expanding in
+  // front of an audience, since the tree IS the architecture under discussion.
+  if (block.plan) {
+    const toggle = el('button', 'btn btn--outlined result-card__toggle', 'show graph');
+    const tree = el('div', 'plan-tree');
+    tree.hidden = true;
+    for (const node of block.plan) {
+      const row = el('div', 'plan-node');
+      row.style.marginLeft = `${node.depth * 18}px`;
+      row.append(el('span', 'plan-node__op', node.op));
+      if (node.detail) row.append(el('span', 'plan-node__detail', node.detail));
+      // Highlight the two operators this whole exercise is about.
+      if (node.op === 'StreamMatchRecognize' || node.op === 'StreamWatermarkSort') {
+        row.dataset.highlight = 'true';
+      }
+      tree.append(row);
+    }
+    toggle.addEventListener('click', () => {
+      tree.hidden = !tree.hidden;
+      toggle.textContent = tree.hidden ? 'show graph' : 'hide graph';
+    });
+    card.append(toggle, tree);
+    return card;
+  }
+
   if (block.rows.length === 0) {
     // "Nothing was emitted" is frequently the assertion itself — a held match, a rejected
     // pattern — so it is stated, not left as an empty frame.
