@@ -21,6 +21,39 @@ struct PipelineSql;
 #[folder = "../../scenarios/semantics"]
 struct SemanticsScenarios;
 
+/// The playground demos: runnable tours of the feature rather than assertions about its edges. They
+/// deliberately leave their tables and views behind, so running one and then switching to the
+/// playground tab lands you in front of objects worth querying.
+#[derive(RustEmbed)]
+#[folder = "../../scenarios/playground"]
+struct PlaygroundScenarios;
+
+/// The two bundles, each under the group name that qualifies its scenarios. A scenario is addressed
+/// as `group/name`, and a name is only ever looked up in the group it names — so the two sets cannot
+/// shadow one another, and neither a stray `..` nor an unknown group resolves to anything.
+const GROUPS: [&str; 2] = ["semantics", "demos"];
+
+fn file_in(group: &str, file: &str) -> Option<Vec<u8>> {
+    let embedded = match group {
+        "semantics" => SemanticsScenarios::get(file),
+        "demos" => PlaygroundScenarios::get(file),
+        _ => None,
+    }?;
+    Some(embedded.data.into_owned())
+}
+
+fn names_in(group: &str) -> Vec<String> {
+    let iter: Box<dyn Iterator<Item = std::borrow::Cow<'static, str>>> = match group {
+        "semantics" => Box::new(SemanticsScenarios::iter()),
+        "demos" => Box::new(PlaygroundScenarios::iter()),
+        _ => return Vec::new(),
+    };
+    let mut names: Vec<String> =
+        iter.filter_map(|f| f.strip_suffix(".sql").map(|n| format!("{group}/{n}"))).collect();
+    names.sort();
+    names
+}
+
 /// The embedded copy of `scenarios/perf/setup_realtime.sql`, used whenever `--setup-sql` is not
 /// passed. Panics if the file was somehow not embedded — that would mean the build itself is
 /// broken (the file moved or was renamed without updating this module), not a runtime condition
@@ -40,13 +73,9 @@ pub fn strip_psql_meta_commands(sql: &str) -> String {
     sql.lines().filter(|l| !l.trim_start().starts_with('\\')).collect::<Vec<_>>().join("\n")
 }
 
-/// The semantics scenarios' file names, sorted, without the `.sql`.
+/// Every scenario, as `group/name`, sorted within each group and with the groups in `GROUPS` order.
 pub fn scenario_names() -> Vec<String> {
-    let mut names: Vec<String> = SemanticsScenarios::iter()
-        .filter_map(|f| f.strip_suffix(".sql").map(str::to_owned))
-        .collect();
-    names.sort();
-    names
+    GROUPS.iter().flat_map(|group| names_in(group)).collect()
 }
 
 /// A scenario's name alongside the prose it opens with, for the correctness tab.
@@ -79,11 +108,15 @@ pub fn leading_comment(sql: &str) -> String {
     out.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// One scenario's SQL. `None` for a name that is not embedded — the caller turns that into a 404
-/// rather than trusting a name off the wire to reach the filesystem.
+/// One scenario's SQL, addressed as `group/name`. `None` for anything not embedded — the caller
+/// turns that into a 404 rather than trusting a name off the wire to reach the filesystem.
+///
+/// The split is on the FIRST slash only, and what follows must name a file in that group's bundle
+/// exactly. A `..` therefore cannot traverse: it is simply not a file any bundle contains.
 pub fn scenario_sql(name: &str) -> Option<String> {
-    let file = SemanticsScenarios::get(&format!("{name}.sql"))?;
-    String::from_utf8(file.data.into_owned()).ok()
+    let (group, file) = name.split_once('/')?;
+    let bytes = file_in(group, &format!("{file}.sql"))?;
+    String::from_utf8(bytes).ok()
 }
 
 /// Rewrite the realtime pipeline's watermark lateness. The setup SQL keeps a real, runnable
@@ -116,11 +149,36 @@ mod tests {
     fn the_scenarios_are_embedded() {
         let names = scenario_names();
         assert!(
-            names.iter().any(|n| n == "preference_supersession"),
+            names.iter().any(|n| n == "semantics/preference_supersession"),
             "expected the supersession scenario, got {names:?}"
         );
-        assert!(scenario_sql("preference_supersession").is_some());
-        assert!(scenario_sql("../../../etc/passwd").is_none(), "names must not escape the bundle");
+        assert!(scenario_sql("semantics/preference_supersession").is_some());
+    }
+
+    #[test]
+    fn both_groups_are_embedded_and_kept_apart() {
+        let names = scenario_names();
+        assert!(
+            names.iter().any(|n| n == "demos/02_match_recognize"),
+            "expected the demo set, got {names:?}"
+        );
+        // A name is only ever looked up in the group it names, so the two sets cannot shadow each
+        // other and an unknown group resolves to nothing at all.
+        assert!(scenario_sql("demos/preference_supersession").is_none());
+        assert!(scenario_sql("semantics/02_match_recognize").is_none());
+        assert!(scenario_sql("nosuchgroup/02_match_recognize").is_none());
+    }
+
+    #[test]
+    fn a_name_cannot_escape_its_bundle() {
+        for name in [
+            "../../../etc/passwd",
+            "semantics/../../../etc/passwd",
+            "nosuchgroup/../semantics/preference_supersession",
+            "preference_supersession", // unqualified: no group, no file
+        ] {
+            assert!(scenario_sql(name).is_none(), "{name:?} must not resolve");
+        }
     }
 
     #[test]

@@ -101,8 +101,12 @@ cargo run --release -p bench-web -- --pin      # partition the cores first (see 
 Four tabs over the same cluster:
 
 - **live** — the alert feed, rows/s and alerts/s dials, and the latency chart.
-- **correctness** — a check picker with the prose its scenario file opens with, and its results as
-  tables on the right. Each materialized view a check creates also yields a **show graph** toggle:
+- **correctness** — a picker over two groups of scenarios, each showing the prose its own file opens
+  with, and its results as tables on the right. *semantics checks* (`scenarios/semantics`) pin down
+  one edge of the spec each and clean up after themselves; *demos* (`scenarios/playground`) are
+  runnable tours that deliberately leave their tables and views behind, so running one and switching
+  to the playground lands you in front of objects worth querying — see
+  [`scenarios/playground/README.md`](scenarios/playground/README.md). Each materialized view a check creates also yields a **show graph** toggle:
   the streaming plan it compiles to, as an operator tree with `StreamMatchRecognize` and
   `StreamWatermarkSort` highlighted — the ordering/matching split, visible on the machine rather
   than described. These checks build their own tables and drop them again; they share nothing with

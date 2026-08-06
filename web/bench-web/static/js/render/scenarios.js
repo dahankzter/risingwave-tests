@@ -7,6 +7,12 @@
 
 let catalogue = [];
 
+/** What each group of scenarios is for, since the folder name alone does not say. */
+const GROUP_LABELS = {
+  semantics: 'semantics checks — one spec edge each',
+  demos: 'demos — a tour, objects left behind',
+};
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -107,12 +113,17 @@ export function renderBlocks(host, blocks, caption = expectCaption) {
   for (const [i, block] of blocks.entries()) host.append(renderBlock(block, i, caption));
 }
 
+/** A scenario's display name: the group qualifies it on the wire but adds nothing to a heading. */
+function bareName(name) {
+  return name.slice(name.indexOf('/') + 1).replace(/_/g, ' ');
+}
+
 function renderResults(dom, name, result) {
   const host = dom.scenarioResults;
   host.textContent = '';
 
   const head = el('div', 'results__head');
-  const title = el('h2', 'results__title', name.replace(/_/g, ' '));
+  const title = el('h2', 'results__title', bareName(name));
   const verdict = el('span', 'results__verdict', result.ok ? 'passed' : 'failed');
   verdict.dataset.state = result.ok ? 'good' : 'bad';
   head.append(title, verdict);
@@ -124,7 +135,7 @@ function renderResults(dom, name, result) {
 function renderRunning(dom, name) {
   dom.scenarioResults.textContent = '';
   const head = el('div', 'results__head');
-  head.append(el('h2', 'results__title', name.replace(/_/g, ' ')));
+  head.append(el('h2', 'results__title', bareName(name)));
   const verdict = el('span', 'results__verdict', 'running…');
   verdict.dataset.state = 'unknown';
   head.append(verdict);
@@ -144,10 +155,26 @@ export function wireScenarios(dom, api, showMessage) {
   api.scenarioList().then((list) => {
     catalogue = list;
     select.textContent = '';
-    for (const { name } of list) {
-      const opt = el('option', null, name.replace(/_/g, ' '));
-      opt.value = name;
-      select.append(opt);
+    // Scenarios arrive as `group/name`. The two groups answer different questions — the semantics
+    // checks pin down an edge of the spec, the demos tour the feature and leave their objects
+    // behind for the playground — so they are kept visibly apart rather than pooled into one list.
+    const groups = new Map();
+    for (const entry of list) {
+      const [group, bare] = entry.name.includes('/')
+        ? [entry.name.slice(0, entry.name.indexOf('/')), entry.name.slice(entry.name.indexOf('/') + 1)]
+        : ['other', entry.name];
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push({ value: entry.name, label: bare });
+    }
+    for (const [group, items] of groups) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = GROUP_LABELS[group] ?? group;
+      for (const { value, label } of items) {
+        const opt = el('option', null, label.replace(/_/g, ' '));
+        opt.value = value;
+        optgroup.append(opt);
+      }
+      select.append(optgroup);
     }
     if (list.length === 0) {
       select.append(el('option', null, 'none embedded'));
