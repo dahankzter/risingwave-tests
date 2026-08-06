@@ -161,8 +161,8 @@
         <button id="btn-catalog-refresh" class="btn btn--outlined btn--small" type="button">refresh</button>
       </div>
       <p class="playground__hint">
-        Click a name to describe it. Internal state tables and the pg_catalog compatibility views
-        are omitted.
+        Click a name to select and describe it; <b>show data</b> then reads its first rows.
+        Internal state tables and the pg_catalog compatibility views are omitted.
       </p>
       <div id="catalog-list" class="catalog-list"></div>
       <div class="playground__shortcuts">
@@ -181,6 +181,7 @@
       <div class="playground__actions">
         <button id="btn-sql-run" class="btn btn--filled" type="button">run SQL</button>
         <span class="playground__kbd">⌘/Ctrl + Enter</span>
+        <button id="btn-sql-show-data" class="btn btn--tonal" type="button" disabled>show data</button>
         <button id="btn-sql-clear" class="btn btn--outlined" type="button">clear</button>
       </div>
       <div id="sql-results" class="correctness__results" aria-live="polite">

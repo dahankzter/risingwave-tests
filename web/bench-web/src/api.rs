@@ -680,7 +680,7 @@ async fn run_sql_blocks(
             // a scenario deliberately does not, so its transcript never reads "expect select …" as
             // though the statement were the assertion.
             let caption = || match ack {
-                Ack::EveryStatement => Some(first_words(&stmt)),
+                Ack::EveryStatement => Some(summarize_stmt(&stmt)),
                 Ack::ResultsOnly => None,
             };
             match client.query(&stmt, &[]).await {
@@ -721,7 +721,7 @@ async fn run_sql_blocks(
 
         if ack == Ack::EveryStatement {
             blocks.push(ScenarioBlock {
-                expect: Some(first_words(&stmt)),
+                expect: Some(summarize_stmt(&stmt)),
                 status: Some("ran".to_string()),
                 ..Default::default()
             });
@@ -913,6 +913,20 @@ fn fmt_datetime(y: i32, mo: u8, d: u8, h: u8, mi: u8, s: u8) -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
+/// A statement as one line, for a caption. Whitespace is collapsed (these arrive multi-line) and
+/// the result is capped, because the caption sits above the result and must not become the result.
+///
+/// `first_words` is not enough here: cut at four words, `select a, b, c from t limit 20` becomes
+/// "select a, b, c" — losing both the table and the limit, the two things that say what ran.
+fn summarize_stmt(stmt: &str) -> String {
+    const MAX: usize = 80;
+    let one_line = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= MAX {
+        return one_line;
+    }
+    one_line.chars().take(MAX).collect::<String>() + "…"
+}
+
 fn first_words(stmt: &str) -> String {
     stmt.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
 }
@@ -1030,6 +1044,24 @@ mod tests {
             })
             .collect();
         assert_eq!(stmts, vec!["select 'a -- b';"]);
+    }
+
+    #[test]
+    fn a_statement_summary_keeps_the_whole_line_until_it_is_long() {
+        // Four words would cut this to "select a, b," — dropping the table AND the limit, which are
+        // the two things that identify what ran.
+        assert_eq!(
+            summarize_stmt("select a, b, c\n  from t\n  limit 20;\n"),
+            "select a, b, c from t limit 20;"
+        );
+    }
+
+    #[test]
+    fn a_long_statement_summary_is_truncated_with_an_ellipsis() {
+        let long = format!("select {};", "x".repeat(200));
+        let summary = summarize_stmt(&long);
+        assert!(summary.chars().count() <= 81, "got {} chars", summary.chars().count());
+        assert!(summary.ends_with('…'));
     }
 
     #[test]

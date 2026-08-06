@@ -61,6 +61,7 @@ const dom = {
   btnCatalogRefresh: document.getElementById('btn-catalog-refresh'),
   sqlInput: document.getElementById('sql-input'),
   btnSqlRun: document.getElementById('btn-sql-run'),
+  btnSqlShowData: document.getElementById('btn-sql-show-data'),
   btnSqlClear: document.getElementById('btn-sql-clear'),
   sqlResults: document.getElementById('sql-results'),
 

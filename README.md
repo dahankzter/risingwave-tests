@@ -109,9 +109,12 @@ Four tabs over the same cluster:
   the load, so running one mid-load disturbs neither.
 - **playground** — arbitrary SQL against the same cluster, for the questions a fixed scenario set
   cannot answer. The left column lists your tables, views, sources and sinks (click one to
-  `describe` it) plus `show tables` / `show materialized views` / `show sources` / `show sinks` /
-  `show internal tables` shortcuts; the right column is an editor (⌘/Ctrl+Enter runs) over the same
-  results renderer the correctness tab uses. Statements run one at a time in order, so a failure
+  `describe` it, and **show data** then reads its first 20 rows) plus `show tables` /
+  `show materialized views` / `show sources` / `show sinks` / `show internal tables` shortcuts; the
+  right column is an editor (⌘/Ctrl+Enter runs) over the same results renderer the correctness tab
+  uses. **show data** is disabled for a sink, which has no rows to read — RisingWave's own message
+  for that is a bare "Failed to prepare the statement" with nothing under it, so the button says
+  why instead. Statements run one at a time in order, so a failure
   names the statement that failed; every materialized view you create gets the same **show graph**
   plan tree. Note that RisingWave's internal state tables and the pg_catalog compatibility views
   are omitted from the list — `show internal tables` reaches the former when you want them. The list
