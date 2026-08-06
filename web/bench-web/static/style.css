@@ -777,3 +777,67 @@ input[type='range']::-moz-range-thumb {
 }
 
 /* 'unknown' keeps the neutral default: an unproven state must not look like a healthy one. */
+
+/* ---- Speedometer dials --------------------------------------------------- */
+/* SVG, not canvas: the dial and its labels are static, so only the needle's transform changes on
+   a tick — text stays crisp at any zoom and a 4Hz update costs one attribute write. */
+.dial-host {
+  display: flex;
+  justify-content: center;
+}
+
+.dial {
+  width: 100%;
+  max-width: 190px;
+  height: auto;
+}
+
+.dial__track {
+  fill: none;
+  stroke: var(--md-sys-color-surface-container-highest);
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+/* The travelled arc: the same accent as the numeric readout, so the two agree at a glance. */
+.dial__value {
+  fill: none;
+  stroke: var(--md-sys-color-primary);
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.dial__ticks line {
+  stroke: var(--md-sys-color-outline);
+  stroke-width: 1.2;
+}
+
+.dial__labels text {
+  fill: var(--md-sys-color-on-surface-variant);
+  font-size: 8px;
+  font-family: inherit;
+}
+
+/* The requested rate. Red, and drawn over the arc, because "the generator is not keeping up" is
+   the one thing this dial exists to make obvious. */
+.dial__target {
+  stroke: var(--bench-bad);
+  stroke-width: 2;
+}
+
+.dial__needle line {
+  stroke: var(--md-sys-color-on-surface);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.dial__needle circle {
+  fill: var(--md-sys-color-on-surface);
+}
+
+/* Under a dial the reading is a caption to the needle, not the headline it is on its own. */
+.card__display--dial {
+  font-size: var(--md-sys-typescale-headline-small-size, 1.5rem);
+  line-height: 1.2;
+  margin-top: 2px;
+}

@@ -115,8 +115,9 @@ Two things the console is deliberate about:
   non-x86 host), unpinned, or fewer than 8 cores, and the panel says "shape-check only" with the
   reasons. A screenshot of a laptop run cannot circulate as a measurement.
 
-Operator metrics come from the compute node's Prometheus endpoint on port 1222 (published by
-`make up`, `compose.yaml` and the console's podman driver). They are **totals since cluster
+Operator metrics come from the Prometheus endpoint on port **1260** — where the `single_node`
+binary serves them, not the 1222 a multi-node compute node would use (published by `make up`,
+`compose.yaml` and the console's podman driver). They are **totals since cluster
 start** — the counters survive dropped and recreated pipelines.
 
 ### CPU pinning

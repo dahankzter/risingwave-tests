@@ -44,9 +44,9 @@ const dom = {
 
   gaugeRowsValue: document.getElementById('gauge-rows-value'),
   gaugeRowsCaption: document.getElementById('gauge-rows-caption'),
-  gaugeRowsFill: document.getElementById('gauge-rows-fill'),
-  gaugeRowsTarget: document.getElementById('gauge-rows-target'),
+  gaugeRowsDial: document.getElementById('gauge-rows-dial'),
   gaugeAlertsValue: document.getElementById('gauge-alerts-value'),
+  gaugeAlertsDial: document.getElementById('gauge-alerts-dial'),
 
   latencyChart: document.getElementById('latency-chart'),
   latencyCaption: document.getElementById('latency-caption'),
@@ -92,12 +92,11 @@ store.addEventListener('rate', () => {
     {
       valueEl: dom.gaugeRowsValue,
       captionEl: dom.gaugeRowsCaption,
-      fillEl: dom.gaugeRowsFill,
-      targetEl: dom.gaugeRowsTarget,
+      dialEl: dom.gaugeRowsDial,
     },
     store.rate,
   );
-  renderAlertsGauge(dom.gaugeAlertsValue, store.rate);
+  renderAlertsGauge({ valueEl: dom.gaugeAlertsValue, dialEl: dom.gaugeAlertsDial }, store.rate);
   renderFeedCaption(dom.feedCaption, store.rate.alertsPerSecOut);
 });
 

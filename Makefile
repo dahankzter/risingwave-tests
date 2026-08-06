@@ -46,7 +46,7 @@ help:
 	@echo
 	@echo "  # console"
 	@echo "  console [PIN=1] [PORT=]  the demo web console (cluster, load, feed, details tab)"
-	@echo "  metrics                  operator counters straight off the compute node (:1222)"
+	@echo "  metrics                  operator counters straight off the compute node (:1260)"
 	@echo "  test                     the Rust workspace's unit tests"
 	@echo
 	@echo "image: $(RW_IMAGE)"
@@ -86,7 +86,7 @@ info:
 	@echo
 	@echo "When something looks wrong"
 	@echo "  make logs        follow the container"
-	@echo "  make metrics     operator counters straight off the compute node (:1222)"
+	@echo "  make metrics     operator counters straight off the compute node (:1260)"
 	@echo "  make psql        poke at the data yourself"
 	@echo "  make clean       drop the data volume — REQUIRED when switching to an image"
 	@echo "                   with a different wire format, otherwise the new build aborts"
@@ -101,9 +101,9 @@ info:
 # is untouched, so this costs nothing but a restart -- use `make clean` to actually drop state.
 up:
 	podman run -d --replace --name $(NAME) --platform linux/amd64 \
-		-p 4566:4566 -p 5690:5690 -p 1222:1222 \
+		-p 4566:4566 -p 5690:5690 -p 1260:1260 \
 		-v rw-tests-data:/root/.risingwave \
-		$(RW_IMAGE) single_node
+		$(RW_IMAGE) single_node --prometheus-listener-addr 0.0.0.0:1260
 	$(MAKE) wait
 
 # Bounded: a container that dies during startup (the classic case is barrier recovery aborting on
@@ -217,8 +217,8 @@ console: $(CONSOLE)
 # endpoint — the same numbers the console's details tab sums. Useful without the UI, and the first
 # thing to check if that tab shows dashes.
 metrics:
-	@curl -fsS localhost:1222/metrics | grep '^stream_match_recognize' \
-		|| echo "no metrics on :1222 (is the cluster up, and is the port published?)"
+	@curl -fsS localhost:1260/metrics | grep '^stream_match_recognize' \
+		|| echo "no metrics on :1260 (is the cluster up, and is the port published?)"
 
 test:
 	cd web && cargo test --workspace

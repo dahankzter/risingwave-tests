@@ -3,7 +3,7 @@
 //! `up` mirrors the Makefile's `up` target exactly (see `/Makefile`'s `up:` recipe), so a
 //! container started from the web console behaves identically to one started with `make up` —
 //! same name, same platform pin, same published ports, same data volume. It additionally
-//! publishes `-p 1222:1222` ahead of Task 7's metrics scrape (the Makefile and `compose.yaml`
+//! publishes `-p 1260:1260` for the metrics scrape (the Makefile and `compose.yaml`
 //! gain that port in that task; this driver gets it now so the two stay in lockstep once they
 //! do).
 //!
@@ -119,10 +119,10 @@ impl Cluster for PodmanDriver {
                 "4566:4566".into(),
                 "-p".into(),
                 "5690:5690".into(),
-                // Task 7's metrics scrape needs this; publishing it now keeps the driver and the
-                // Makefile/compose.yaml (which gain it in that task) in step from the start.
+                // The operator-metrics scrape. 1260 is where `single_node` serves Prometheus —
+                // not the 1222 of a multi-node compute node (verified against a live container).
                 "-p".into(),
-                "1222:1222".into(),
+                "1260:1260".into(),
                 "-v".into(),
                 format!("{DATA_VOLUME}:/root/.risingwave"),
             ];
@@ -133,6 +133,11 @@ impl Cluster for PodmanDriver {
             }
             args.push(self.image.clone());
             args.push("single_node".into());
+            // Without this the metrics endpoint binds loopback inside the container and the
+            // published port forwards to nothing — the scrape silently sees no series, which
+            // looks exactly like an image built before the counters existed.
+            args.push("--prometheus-listener-addr".into());
+            args.push("0.0.0.0:1260".into());
             run(&args).await
         })
     }

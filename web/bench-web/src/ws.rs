@@ -42,6 +42,10 @@ const AGG_TICK: Duration = Duration::from_millis(250);
 /// counters through); the tick fires on schedule but publishes nothing until then, per the plan
 /// — fabricating zeros would be worse than staying silent.
 const METRICS_TICK: Duration = Duration::from_secs(2);
+
+/// Where the operator counters live: the `single_node` binary's Prometheus endpoint. See
+/// `metrics.rs` on why this is 1260 and not the 1222 a multi-node deployment would use.
+const METRICS_ADDR: &str = "127.0.0.1:1260";
 /// Window `RateWindow` averages `rows_per_sec_in` / `alerts_per_sec_out` over. Short enough that
 /// the console's rate numbers track a rate change (e.g. `POST /api/load/rate`) within a couple
 /// of seconds rather than smoothing it away.
@@ -217,7 +221,7 @@ async fn aggregator_loop(state: Arc<AppState>) {
             }
             _ = metrics_tick.tick() => {
                 // Unreachable endpoint (cluster down) is a normal state: skip quietly.
-                if let Some(t) = crate::metrics::scrape("127.0.0.1:1222").await {
+                if let Some(t) = crate::metrics::scrape(METRICS_ADDR).await {
                     state.publish(Event::Metrics {
                         matches_emitted: t.matches_emitted,
                         evicted_rows: t.evicted_rows,

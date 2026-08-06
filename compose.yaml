@@ -19,14 +19,16 @@ services:
   risingwave:
     image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2}
     container_name: rw-tests
-    command: single_node
+    # See the Makefile: the metrics endpoint binds loopback inside the container unless told
+    # otherwise, which makes the published port unreachable.
+    command: single_node --prometheus-listener-addr 0.0.0.0:1260
     # The published images are linux/amd64 only; on Apple Silicon this runs emulated, which is
     # fine for semantics but meaningless for the perf and latency targets.
     platform: linux/amd64
     ports:
       - "4566:4566"   # SQL (pgwire)
       - "5690:5690"   # meta dashboard
-      - "1222:1222"   # compute-node Prometheus (operator metrics scrape)
+      - "1260:1260"   # single_node Prometheus (operator metrics scrape; NOT 1222)
     volumes:
       - rw-tests-data:/root/.risingwave
     healthcheck:

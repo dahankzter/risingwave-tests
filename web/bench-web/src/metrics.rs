@@ -1,6 +1,10 @@
-//! Operator-metrics scrape: the compute node's Prometheus endpoint (port 1222 inside the
-//! container, published by `make up`/`compose.yaml`/the podman driver) carries the three
-//! `stream_match_recognize_*` counters, one series per actor. This module fetches the text
+//! Operator-metrics scrape: the Prometheus endpoint inside the container carries the three
+//! `stream_match_recognize_*` counters, one series per actor.
+//!
+//! **The port is 1260, not 1222.** 1222 is the compute node's metrics port in a multi-node
+//! deployment; the `single_node` binary this bench runs serves on 1260. Verified against a live
+//! container (1222 accepts nothing; 1260 answers with 36 `stream_match_recognize_*` series) —
+//! worth stating because the wrong port fails the same way an image without the counters does. This module fetches the text
 //! exposition, sums each counter across actors, and hands the totals to the aggregator, which
 //! publishes them as `Event::Metrics` on its 2s tick.
 //!
@@ -23,10 +27,17 @@ pub struct Totals {
 }
 
 /// Fetch and sum. `None` when the endpoint is unreachable (cluster down — a normal state, not an
-/// error worth logging every 2 seconds) or the body doesn't parse.
+/// error worth logging every 2 seconds) or when the body carries no MATCH_RECOGNIZE series at all.
+///
+/// That second case matters: an image built before the operator metrics landed, or a cluster whose
+/// MATCH_RECOGNIZE actors have not started, serves a perfectly good `/metrics` with none of these
+/// counters in it. Summing that to `Totals::default()` would publish three confident zeros — which
+/// is what the console did while ten thousand matches were visibly streaming past in the feed.
+/// Reporting nothing keeps the panel's dashes, which say "not measured" rather than "zero".
 pub async fn scrape(addr: &str) -> Option<Totals> {
     let body = fetch(addr).await.ok()?;
-    Some(parse(&body))
+    let (totals, found) = parse_counted(&body);
+    if found == 0 { None } else { Some(totals) }
 }
 
 async fn fetch(addr: &str) -> anyhow::Result<String> {
@@ -49,7 +60,14 @@ async fn fetch(addr: &str) -> anyhow::Result<String> {
 /// actor). Prometheus text exposition: `name{labels} value`, comments start with `#`. Values are
 /// integer counters but arrive as floats (`42` or `42.0` or scientific for large counts).
 pub fn parse(body: &str) -> Totals {
+    parse_counted(body).0
+}
+
+/// The totals plus how many matching series were seen, so a caller can tell "all three counters
+/// are genuinely zero" from "this build has no such counters".
+pub fn parse_counted(body: &str) -> (Totals, usize) {
     let mut t = Totals::default();
+    let mut found = 0usize;
     for line in body.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -74,11 +92,12 @@ pub fn parse(body: &str) -> Totals {
             if let Ok(f) = v.parse::<f64>() {
                 if f.is_finite() && f >= 0.0 {
                     *target += f as u64;
+                    found += 1;
                 }
             }
         }
     }
-    t
+    (t, found)
 }
 
 #[cfg(test)]
@@ -100,6 +119,19 @@ stream_exchange_frag_send_size{up_fragment_id=\"1\",down_fragment_id=\"2\"} 9999
         assert_eq!(t.matches_emitted, 42);
         assert_eq!(t.evicted_rows, 100);
         assert_eq!(t.scan_budget_exhausted, 0);
+    }
+
+    #[test]
+    fn a_body_without_these_counters_is_not_three_zeros() {
+        // An image predating the operator metrics, or a cluster whose actors have not started,
+        // serves a valid /metrics with none of these series. That must read as "not measured".
+        let body = "stream_exchange_frag_send_size{a=\"1\"} 42\n";
+        assert_eq!(parse_counted(body).1, 0);
+        // ... whereas a real zero counter is a measurement, and must be reported as one.
+        let real_zero = "stream_match_recognize_matches_emitted_count{a=\"1\"} 0\n";
+        let (t, found) = parse_counted(real_zero);
+        assert_eq!(found, 1);
+        assert_eq!(t.matches_emitted, 0);
     }
 
     #[test]

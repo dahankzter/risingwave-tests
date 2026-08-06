@@ -60,17 +60,15 @@
     <aside class="rail" aria-label="live metrics">
       <section class="card card--gauge" aria-label="rows per second">
         <p class="card__label">rows/s in</p>
-        <p id="gauge-rows-value" class="card__display">0</p>
+        <div id="gauge-rows-dial" class="dial-host"></div>
+        <p id="gauge-rows-value" class="card__display card__display--dial">0</p>
         <p id="gauge-rows-caption" class="card__caption">requested 0/s</p>
-        <div class="gauge-track" aria-hidden="true">
-          <div id="gauge-rows-fill" class="gauge-track__fill"></div>
-          <div id="gauge-rows-target" class="gauge-track__target"></div>
-        </div>
       </section>
 
       <section class="card card--gauge" aria-label="alerts per second">
         <p class="card__label">alerts/s out</p>
-        <p id="gauge-alerts-value" class="card__display">0</p>
+        <div id="gauge-alerts-dial" class="dial-host"></div>
+        <p id="gauge-alerts-value" class="card__display card__display--dial">0</p>
         <p class="card__caption">matched chains emitted</p>
       </section>
 
