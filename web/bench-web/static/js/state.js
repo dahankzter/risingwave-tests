@@ -29,6 +29,10 @@ export class Store extends EventTarget {
   handleEvent(ev) {
     switch (ev.type) {
       case 'alert':
+        // Marked, not dropped: a stale alert is a real match, and the burst of them when a
+        // previous run's unreleased rows finally get a watermark is worth seeing — but its
+        // latency measures the gap in traffic, not the pipeline.
+        ev.stale = this.epochMs != null && ev.ingest_ms < this.epochMs;
         this._pushAlert(ev);
         break;
       case 'rate':
@@ -56,8 +60,10 @@ export class Store extends EventTarget {
         break;
       case 'stats_reset':
         // New measurement epoch (load started / pipeline rebuilt): the chart restarts so its
-        // percentiles describe the current run.
+        // percentiles describe the current run, and later alerts can be checked against the
+        // boundary — see the server's `StatsReset` doc comment.
         this.statsHistory = [];
+        this.epochMs = ev.epoch_ms;
         this.dispatchEvent(new CustomEvent('stats'));
         break;
       case 'probe':

@@ -841,3 +841,16 @@ input[type='range']::-moz-range-thumb {
   line-height: 1.2;
   margin-top: 2px;
 }
+
+/* A stale alert: real match, but its latency is the length of a gap in traffic rather than a
+   processing time. Neutral-grey rather than an escalation colour — it is not a worse "late", it is
+   a different kind of number, and it must not read as a performance problem. */
+.feed-row__severity--stale {
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* A caption that explains the card sits directly under its label, above the plot. */
+.card__caption--tight {
+  margin: 0 0 6px;
+}

@@ -212,7 +212,7 @@ async fn load_start(State(state): State<Arc<AppState>>, Json(req): Json<LoadRequ
             // New measurement epoch: percentiles must describe THIS run, not accumulate across
             // runs (a rebuilt pipeline mid-run once put p95 at 26x p50 from stale samples).
             state.clear_last_stats();
-            state.publish(Event::StatsReset {});
+            state.publish(Event::StatsReset { epoch_ms: now_ms() });
             state.publish(Event::Log { level: "info".to_string(), text: "load: started".to_string() });
             StatusCode::OK.into_response()
         }
@@ -319,7 +319,7 @@ async fn pipeline_rebuild(State(state): State<Arc<AppState>>) -> Response {
     // The rebuild dropped and recreated the pipeline: everything measured before it belongs to a
     // different world. Same epoch roll as load/start.
     state.clear_last_stats();
-    state.publish(Event::StatsReset {});
+    state.publish(Event::StatsReset { epoch_ms: now_ms() });
     state.publish(Event::Log {
         level: "info".to_string(),
         text: "pipeline: rebuilt; alert reader will reconnect".to_string(),
@@ -467,4 +467,14 @@ async fn fetch_pipeline_stats(db_url: &str) -> anyhow::Result<PipelineStats> {
         }
     }
     Ok(stats)
+}
+
+/// Wall clock in unix milliseconds, for the measurement-epoch boundary. Compared against alert
+/// ingest stamps, which come from the cluster's `proctime()` — the same clock as long as the
+/// cluster and this process share a host, which is the case for every run this console drives.
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
 }

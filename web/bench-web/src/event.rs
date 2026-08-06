@@ -11,6 +11,10 @@ pub enum Event {
         chain_len: i64,
         latency_ms: f64,
         alert_ts: String,
+        /// When the cluster took ownership of the chain's completing row, in unix milliseconds.
+        /// Carried so the aggregator can tell an alert belonging to THIS run from one whose
+        /// trigger was ingested in a previous one — see `StatsReset`.
+        ingest_ms: f64,
     },
     Rate {
         rows_per_sec_in: f64,
@@ -43,7 +47,14 @@ pub enum Event {
     /// aggregator's percentiles restart so a run's numbers describe that run — accumulated
     /// cross-run samples put a stale p95 two orders of magnitude above p50. Clients clear their
     /// stats history on this.
-    StatsReset {},
+    ///
+    /// `epoch_ms` is the boundary in unix milliseconds. Resetting the accumulator is not enough on
+    /// its own: rows left unreleased in the sort by a previous run (their watermark never advanced
+    /// because the traffic stopped) are released the moment new traffic arrives, and match
+    /// immediately — producing genuine alerts whose trigger was ingested tens of minutes ago. They
+    /// are real, but they measure the absence of traffic, not the pipeline, so they are excluded
+    /// from this run's percentiles by comparing each alert's `ingest_ms` against this.
+    StatsReset { epoch_ms: f64 },
     Snapshot {
         status: Box<Event>,
         recent: Vec<Event>,

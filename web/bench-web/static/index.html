@@ -74,6 +74,10 @@
 
       <section class="card card--chart" aria-label="latency percentiles">
         <p class="card__label">latency (p50 / p95)</p>
+        <p class="card__caption card__caption--tight">
+          from the completing event entering the cluster to its alert being queryable — includes
+          the 5s watermark delay declared on the table
+        </p>
         <canvas id="latency-chart" width="360" height="160"></canvas>
         <p id="latency-caption" class="card__caption">no samples yet</p>
       </section>

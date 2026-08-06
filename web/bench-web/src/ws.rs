@@ -162,6 +162,10 @@ pub fn spawn_aggregator(state: Arc<AppState>) -> JoinHandle<()> {
 async fn aggregator_loop(state: Arc<AppState>) {
     let mut rx = state.tx.subscribe();
     let mut latencies = Latencies::new();
+    // Alerts whose trigger was ingested before this boundary belong to a previous run — see
+    // `Event::StatsReset`. `None` until the first reset: before any run has been started there is
+    // no epoch to be outside of.
+    let mut epoch_ms: Option<f64> = None;
     let mut rows_in = RateWindow::new(RATE_WINDOW);
     let mut alerts_out = RateWindow::new(RATE_WINDOW);
     let mut last_rows_sent: u64 = 0;
@@ -172,20 +176,21 @@ async fn aggregator_loop(state: Arc<AppState>) {
     loop {
         tokio::select! {
             ev = rx.recv() => match ev {
-                Ok(event @ Event::Alert { latency_ms, .. }) => {
-                    // Every alert reaches the percentiles and the ring buffer, unconditionally —
-                    // this subscriber is never subject to the display Sampler.
-                    latencies.push(latency_ms);
-                    alerts_out.record(Instant::now(), 1);
+                Ok(event @ Event::Alert { latency_ms, ingest_ms, .. }) => {
+                    // Pre-epoch alerts still reach the feed — they are real matches, and hiding
+                    // them would make a burst of stale output look like nothing happened — but
+                    // they are kept out of the percentiles and the rate, which describe this run.
+                    let stale = epoch_ms.is_some_and(|start| ingest_ms < start);
+                    if !stale {
+                        latencies.push(latency_ms);
+                        alerts_out.record(Instant::now(), 1);
+                    }
                     state.record_alert(event);
                 }
-                Ok(Event::StatsReset {}) => {
-                    // A run (or rebuilt pipeline) started: percentiles restart so they describe
-                    // the new measurement epoch. Alerts already in flight from the old world may
-                    // still trickle in and land in the new epoch — acceptable noise at the very
-                    // start of a run, unlike a lifetime of stale samples.
+                Ok(Event::StatsReset { epoch_ms: start }) => {
                     latencies = Latencies::new();
                     alerts_out = RateWindow::new(RATE_WINDOW);
+                    epoch_ms = Some(start);
                 }
                 Ok(_) => {}
                 // The aggregator lagging just means some events were skipped this tick; it has

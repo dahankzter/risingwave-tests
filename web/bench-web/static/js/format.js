@@ -23,7 +23,11 @@ export function formatLatency(ms) {
  * benchmark's own target (p50 settles near 6s under normal load): comfortably under that is
  * "ok", up to double is "slow" (queue building but not alarming), beyond that is "late".
  */
-export function severityFor(latencyMs) {
+export function severityFor(latencyMs, stale = false) {
+  // A match whose trigger was ingested before this run started: its latency is the length of the
+  // gap in traffic (rows sat unreleased in the sort until a watermark arrived), not a measure of
+  // the pipeline. Labelled so nobody reads 25 minutes as a processing time.
+  if (stale) return { cls: 'stale', label: 'stale' };
   if (latencyMs < 8000) return { cls: 'ok', label: 'ok' };
   if (latencyMs < 15000) return { cls: 'slow', label: 'slow' };
   return { cls: 'late', label: 'late' };

@@ -129,7 +129,7 @@ impl Reader {
             self.since_report = 0;
         } else {
             self.since_report += 1;
-            if self.since_report % REPEAT_EVERY != 0 {
+            if !self.since_report.is_multiple_of(REPEAT_EVERY) {
                 return None;
             }
         }
@@ -165,6 +165,7 @@ fn decode_alert(row: &PgRow) -> anyhow::Result<Event> {
         chain_len,
         latency_ms: latency_ms(trigger_ingest_ts, alert_ts_raw),
         alert_ts,
+        ingest_ms: (trigger_ingest_ts.unix_timestamp_nanos() / 1_000_000) as f64,
     })
 }
 

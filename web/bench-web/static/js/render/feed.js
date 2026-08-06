@@ -16,7 +16,7 @@ function buildRow(alert) {
   const li = document.createElement('li');
   li.className = 'feed-row';
 
-  const severity = severityFor(alert.latency_ms);
+  const severity = severityFor(alert.latency_ms, alert.stale);
   const badge = document.createElement('span');
   badge.className = `feed-row__severity feed-row__severity--${severity.cls}`;
   badge.textContent = severity.label;
