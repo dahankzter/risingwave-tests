@@ -9,9 +9,14 @@ use crate::event::Event;
 use crate::podman::Cluster;
 use bench_core::run::RunHandle;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
+
+/// How many alerts a late joiner's `Snapshot` carries. Enough to fill a screen without making
+/// the snapshot frame itself large.
+const RECENT_CAPACITY: usize = 50;
 
 /// Mirrors `Event::Status`'s fields, so publishing the current status is just wrapping this in
 /// that variant.
@@ -46,6 +51,13 @@ pub struct AppState {
     /// Where `pipeline/rebuild` finds `setup_realtime.sql`. A path rather than a hardcoded
     /// literal so it can point at a fixture in tests without touching the real scenario file.
     pub pipeline_sql: PathBuf,
+    /// Ring buffer of the last `RECENT_CAPACITY` `Event::Alert`s, kept for `ws.rs`'s
+    /// `Event::Snapshot` so a client that connects mid-run sees recent activity immediately
+    /// instead of an empty screen until the next alert. Maintained by `ws::spawn_aggregator`,
+    /// which sees every alert (unsampled) off the broadcast channel.
+    pub recent: Mutex<VecDeque<Event>>,
+    /// The most recent `Event::Stats`, if any alert has been measured yet. Also for `Snapshot`.
+    pub last_stats: Mutex<Option<Event>>,
 }
 
 impl AppState {
@@ -58,6 +70,8 @@ impl AppState {
             cluster,
             db_url,
             pipeline_sql,
+            recent: Mutex::new(VecDeque::with_capacity(RECENT_CAPACITY)),
+            last_stats: Mutex::new(None),
         }
     }
 
@@ -73,5 +87,41 @@ impl AppState {
 
     pub fn status_snapshot(&self) -> Status {
         self.status.lock().expect("status mutex poisoned").clone()
+    }
+
+    /// Records one alert into the ring buffer, dropping the oldest once at capacity. Called by
+    /// the aggregator for every alert it sees off the broadcast channel, not by the sampled
+    /// per-client forwarding path — the ring buffer, like the percentiles, must reflect every
+    /// alert, not the thinned display feed.
+    pub fn record_alert(&self, event: Event) {
+        let mut guard = self.recent.lock().expect("recent mutex poisoned");
+        if guard.len() == RECENT_CAPACITY {
+            guard.pop_front();
+        }
+        guard.push_back(event);
+    }
+
+    /// Snapshot of the ring buffer, oldest first, for `Event::Snapshot`.
+    pub fn recent_snapshot(&self) -> Vec<Event> {
+        self.recent.lock().expect("recent mutex poisoned").iter().cloned().collect()
+    }
+
+    pub fn set_last_stats(&self, event: Event) {
+        *self.last_stats.lock().expect("last_stats mutex poisoned") = Some(event);
+    }
+
+    pub fn last_stats_snapshot(&self) -> Option<Event> {
+        self.last_stats.lock().expect("last_stats mutex poisoned").clone()
+    }
+
+    /// Builds the `Event::Snapshot` sent first to every new WebSocket client, and re-sent after
+    /// a `RecvError::Lagged` so a slow client resyncs instead of the producer stalling for it.
+    pub fn snapshot_event(&self) -> Event {
+        let status = self.status_snapshot();
+        Event::Snapshot {
+            status: Box::new(Event::Status { cluster: status.cluster, pipeline: status.pipeline, load: status.load }),
+            recent: self.recent_snapshot(),
+            stats: self.last_stats_snapshot().map(Box::new),
+        }
     }
 }

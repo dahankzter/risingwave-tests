@@ -7,6 +7,7 @@ pub mod event;
 pub mod podman;
 pub mod state;
 pub mod stream;
+pub mod ws;
 
 use axum::Router;
 use podman::{NullCluster, PodmanDriver};
@@ -15,9 +16,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Builds the full router over `AppState`, ready to have a listener attached.
+/// Builds the full router over `AppState`, ready to have a listener attached. Merges the control
+/// API (`api.rs`) with the `GET /ws` fan-out (`ws.rs`).
 pub fn app_router(state: Arc<AppState>) -> Router {
-    api::router().with_state(state)
+    api::router().merge(ws::router()).with_state(state)
 }
 
 /// A router wired to a `NullCluster` and no live database, for the rejection-path tests in
@@ -71,6 +73,7 @@ pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
     ));
 
     let _reader = stream::spawn_reader(cfg.db_url, state.tx.clone());
+    let _aggregator = ws::spawn_aggregator(state.clone());
 
     let router = app_router(state);
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
