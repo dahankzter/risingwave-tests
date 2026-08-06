@@ -1,0 +1,19 @@
+[package]
+name = "bench-web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bench-core = { path = "../bench-core" }
+anyhow.workspace = true
+clap.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal", "sync", "process"] }
+tokio-postgres.workspace = true
+time.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust-embed = "8"
+mime_guess = "2"

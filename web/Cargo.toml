@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bench-core", "bench"]
+members = ["bench-core", "bench", "bench-web"]
 
 [workspace.package]
 edition = "2021"
