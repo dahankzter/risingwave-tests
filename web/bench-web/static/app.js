@@ -163,6 +163,11 @@ wireControls(dom, api, showMessage);
 // and its own store subscriptions.
 wireDetails(store);
 
+// The correctness tab owns its picker, its description text and its results area.
+wireScenarios(dom, api, showMessage);
+// The playground owns its catalog browser, its editor and its results area.
+const playground = wirePlayground(dom, api, showMessage);
+
 // Tabs: one visible view at a time. The details tab keeps its own polling — see details.js — so
 // switching away from it stops that work rather than leaving it running behind a hidden panel.
 const TABS = [
@@ -180,16 +185,14 @@ function selectTab(activeId) {
     tab.setAttribute('aria-selected', String(active));
     view.hidden = !active;
   }
+  // The catalog is only correct as of its last read, and the cluster changes while this tab is
+  // hidden — so re-read on arrival rather than showing whatever was true at page load.
+  if (activeId === 'tab-playground') playground?.refresh();
 }
 for (const [tabId] of TABS) {
   document.getElementById(tabId)?.addEventListener('click', () => selectTab(tabId));
 }
 selectTab('tab-live');
-
-// The correctness tab owns its picker, its description text and its results area.
-wireScenarios(dom, api, showMessage);
-// The playground owns its catalog browser, its editor and its results area.
-wirePlayground(dom, api, showMessage);
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
 /** The two header renderers that share a trigger: a status event carries the live lateness, and

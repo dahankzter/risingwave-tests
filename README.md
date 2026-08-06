@@ -114,7 +114,11 @@ Four tabs over the same cluster:
   results renderer the correctness tab uses. Statements run one at a time in order, so a failure
   names the statement that failed; every materialized view you create gets the same **show graph**
   plan tree. Note that RisingWave's internal state tables and the pg_catalog compatibility views
-  are omitted from the list — `show internal tables` reaches the former when you want them.
+  are omitted from the list — `show internal tables` reaches the former when you want them. The list
+  is re-read each time you enter the tab, since the cluster changes behind it: a correctness check
+  builds its own tables and drops them again, and a check that *fails* leaves them behind (the run
+  stops at the failing statement, so its trailing drops never execute) — which is useful, because
+  you can then go and poke at the wreckage here. Rerunning that check cleans up first.
 - **details** — latency and throughput, the operator metrics, pipeline state, and the run
   environment (which labels its own trustworthiness).
 

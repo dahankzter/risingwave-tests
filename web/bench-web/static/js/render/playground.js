@@ -100,4 +100,10 @@ export function wirePlayground(dom, api, showMessage) {
   }
 
   refreshCatalog();
+  // Handed back so switching to this tab re-reads the catalog. Objects appear and vanish behind the
+  // tab's back — a correctness check creates its own tables and drops them again, and a check that
+  // FAILS leaves them behind (the run stops at the failing statement, so its trailing drops never
+  // execute). A list last read on page load would show neither, and would name tables that no
+  // longer exist.
+  return { refresh: refreshCatalog };
 }
