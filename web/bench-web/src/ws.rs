@@ -16,7 +16,8 @@
 //! A client is sent an `Event::Snapshot` first (current status, the last 50 alerts, current
 //! stats) so a page opened or refreshed mid-run isn't blank until the next tick, and again on
 //! `RecvError::Lagged` so a slow client resyncs instead of the producer stalling for it or the
-//! socket being closed out from under it.
+//! socket being closed out from under it. Repeated `Lagged` events back off (see `LagBackoff`)
+//! so the resync path itself doesn't become the thing flooding an already-struggling client.
 
 use crate::event::Event;
 use crate::state::AppState;
@@ -45,6 +46,12 @@ const METRICS_TICK: Duration = Duration::from_secs(2);
 /// the console's rate numbers track a rate change (e.g. `POST /api/load/rate`) within a couple
 /// of seconds rather than smoothing it away.
 const RATE_WINDOW: Duration = Duration::from_secs(2);
+/// Base and cap for the delay `LagBackoff` inserts before a client resyncs a second (or third,
+/// ...) time in a row. Without this, a client stuck lagging behind the producer gets a fresh
+/// `Event::Snapshot` every loop iteration — throttled only by however fast `socket.send().await`
+/// completes — which turns the rescue path into the thing drowning it.
+const LAG_BACKOFF_BASE: Duration = Duration::from_millis(100);
+const LAG_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/ws", get(ws_handler))
@@ -68,14 +75,18 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
 
     let mut rx = state.tx.subscribe();
     let mut sampler = Sampler::new(DISPLAY_ALERTS_PER_SEC);
+    let mut lag_backoff = LagBackoff::new();
     let start = Instant::now();
 
     loop {
         match rx.recv().await {
             Ok(Event::Alert { .. }) if !sampler.should_forward(start.elapsed().as_secs_f64()) => {
-                // Thinned for display; the aggregator already measured this one.
+                // Thinned for display; the aggregator already measured this one. Real progress,
+                // so any lag streak is over.
+                lag_backoff.reset();
             }
             Ok(ev) => {
+                lag_backoff.reset();
                 if !send_event(&mut socket, &ev).await {
                     return;
                 }
@@ -83,13 +94,57 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
             Err(broadcast::error::RecvError::Lagged(_)) => {
                 // This client fell behind the producer. Rather than close the socket (or block
                 // the producer waiting for it), resync it with a fresh snapshot and keep going —
-                // the next events it sees will be current even though some were skipped.
+                // the next events it sees will be current even though some were skipped. If this
+                // is happening repeatedly, back off first: without that, a client that can't keep
+                // up gets a fresh snapshot every loop iteration (throttled only by how fast its
+                // own `send().await` completes), which drowns it in snapshots instead of rescuing
+                // it.
+                let delay = lag_backoff.next_delay();
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
                 if !send_event(&mut socket, &state.snapshot_event()).await {
                     return;
                 }
             }
             Err(broadcast::error::RecvError::Closed) => return,
         }
+    }
+}
+
+/// Tracks consecutive `RecvError::Lagged` events for one client's socket and decides how long to
+/// sleep before the next resync. Pulled out of `handle_socket` so the backoff policy is
+/// unit-testable without a live socket, the same way `Reader` in `stream.rs` keeps its
+/// retry/backoff decision out of the I/O loop.
+#[derive(Debug, Default)]
+struct LagBackoff {
+    consecutive: u32,
+}
+
+impl LagBackoff {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Call on every `Lagged`. The first lag in a streak resyncs immediately (zero delay) — one
+    /// lag is normal and the whole point of the resync path is to not punish it. Delay only grows
+    /// once lags start repeating without an intervening normal message, and is capped at
+    /// `LAG_BACKOFF_MAX` so a permanently-stuck client still gets checked on periodically rather
+    /// than backing off forever.
+    fn next_delay(&mut self) -> Duration {
+        let delay = if self.consecutive == 0 {
+            Duration::ZERO
+        } else {
+            (LAG_BACKOFF_BASE * self.consecutive.min(64)).min(LAG_BACKOFF_MAX)
+        };
+        self.consecutive += 1;
+        delay
+    }
+
+    /// Call whenever a normal (non-`Lagged`) message is processed — the client caught up, so the
+    /// next `Lagged`, if any, is a fresh streak and should resync immediately again.
+    fn reset(&mut self) {
+        self.consecutive = 0;
     }
 }
 
@@ -188,6 +243,16 @@ async fn current_progress(state: &AppState) -> (u64, f64) {
 /// its refill rate regardless of capacity; capacity only shapes burst behaviour, which is exactly
 /// the knob this needed. `sampler_forwards_everything_when_the_rate_is_below_the_target` still
 /// holds: a feed slower than `target` never drains the bucket below one token by the next call.
+///
+/// That refill-rate bound is an upper bound, not a convergence guarantee: it is only reached when
+/// every quiet gap is short enough that the tokens it generates fit under `capacity`. A gap wider
+/// than one target-second generates more tokens than the bucket can hold, and the excess is
+/// discarded by the `.min(capacity)` clamp rather than banked for later — so a source whose quiet
+/// gaps run wider than the burst window will systematically *undershoot* `target`, not hit it. The
+/// live capture in the task report saw exactly this: ~14/s forwarded against a 20/s target,
+/// because this deployment's real batch-to-batch gaps are sometimes wider than 1s. That is this
+/// sampler's expected behaviour under that delivery pattern, not a bug — read a forwarded rate
+/// noticeably under `target` as "the source is burstier than the burst window", not as a defect.
 #[derive(Debug)]
 pub struct Sampler {
     target_per_sec: f64,
@@ -296,5 +361,42 @@ mod tests {
     fn zero_alerts_is_a_no_op() {
         let mut s = Sampler::new(20.0);
         assert!(s.should_forward(0.0), "an otherwise-idle sampler still forwards the first item");
+    }
+
+    // -- LagBackoff -----------------------------------------------------------------------------
+    //
+    // The socket handler itself isn't unit-testable (it needs a live `WebSocket`), but the
+    // backoff *policy* it delegates to has no I/O in it, so it's tested directly here — same
+    // split as `stream.rs`'s `Reader`. Whether a real client ever drives `Lagged` repeatedly
+    // enough to observe this live is a separate question; see the task report for that gap.
+
+    #[test]
+    fn a_single_lag_resyncs_immediately() {
+        let mut b = LagBackoff::new();
+        assert_eq!(b.next_delay(), Duration::ZERO, "one lag is normal; do not delay the rescue");
+    }
+
+    #[test]
+    fn repeated_lags_without_a_reset_back_off_and_are_capped() {
+        let mut b = LagBackoff::new();
+        assert_eq!(b.next_delay(), Duration::ZERO);
+        assert_eq!(b.next_delay(), LAG_BACKOFF_BASE, "second consecutive lag waits one base step");
+        assert_eq!(b.next_delay(), LAG_BACKOFF_BASE * 2, "third waits two base steps");
+        assert_eq!(b.next_delay(), LAG_BACKOFF_BASE * 3);
+        // Enough further consecutive lags must plateau at the cap, not grow unboundedly.
+        for _ in 0..30 {
+            b.next_delay();
+        }
+        assert_eq!(b.next_delay(), LAG_BACKOFF_MAX, "backoff must not exceed the configured cap");
+    }
+
+    #[test]
+    fn a_normal_message_resets_the_backoff() {
+        let mut b = LagBackoff::new();
+        b.next_delay();
+        b.next_delay();
+        assert_eq!(b.next_delay(), LAG_BACKOFF_BASE * 2, "third consecutive lag is already backed off");
+        b.reset();
+        assert_eq!(b.next_delay(), Duration::ZERO, "a caught-up client's next lag is a fresh streak");
     }
 }
