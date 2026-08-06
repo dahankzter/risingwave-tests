@@ -126,24 +126,29 @@
     </aside>
   </main>
 
-  <section class="view" id="view-correctness" role="tabpanel" aria-labelledby="tab-correctness" hidden>
-    <p class="view__lead">
-      Each check builds its own tiny table, feeds it a handful of hand-chosen rows, asserts what
-      MATCH_RECOGNIZE should emit, and drops everything again. They share nothing with the load —
-      running one mid-load disturbs neither.
-    </p>
-    <div id="scenario-list" class="scenario-list"></div>
-    <section id="scenario-panel" class="scenario" hidden aria-label="check transcript">
-      <div class="scenario__head">
-        <h2 id="scenario-title" class="scenario__title">transcript</h2>
-        <button id="btn-scenario-close" class="btn btn--outlined" type="button">close</button>
-      </div>
-      <p class="scenario__hint">
-        Lines beginning <code>--</code> are the check's own expectations; the rows beneath each are
-        what this cluster actually returned.
+  <section class="view correctness" id="view-correctness" role="tabpanel" aria-labelledby="tab-correctness" hidden>
+    <!-- Picker and prose on the left, results on the right: a check is chosen once and read many
+         times, so the reading area gets the room. -->
+    <aside class="correctness__picker">
+      <label class="select-control select-control--block">
+        check
+        <select id="scenario-select"><option value="">loading&hellip;</option></select>
+      </label>
+      <p id="scenario-description" class="correctness__description"></p>
+      <button id="btn-scenario-run" class="btn btn--filled" type="button">run check</button>
+      <p class="correctness__note">
+        Each check builds its own small table, feeds it hand-chosen rows, asserts what
+        MATCH_RECOGNIZE should emit, and drops everything again. They share nothing with the load —
+        running one mid-load disturbs neither.
       </p>
-      <pre id="scenario-output" class="scenario__output"></pre>
-    </section>
+    </aside>
+
+    <div class="correctness__results" id="scenario-results" aria-live="polite">
+      <p class="view__lead" id="scenario-placeholder">
+        Pick a check and press <strong>run check</strong>. Each step appears as the expectation the
+        check states, followed by the rows this cluster actually returned.
+      </p>
+    </div>
   </section>
 
   <section class="view details" id="view-details" role="tabpanel" aria-labelledby="tab-details" hidden aria-label="run details">

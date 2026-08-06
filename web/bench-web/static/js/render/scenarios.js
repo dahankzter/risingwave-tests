@@ -1,69 +1,130 @@
-// The correctness tab: one card per check, each showing the prose the scenario file itself opens
-// with, and a run button that prints the transcript below.
+// The correctness tab: a picker and the chosen check's own prose on the left, its results as real
+// tables on the right.
 //
-// Descriptions come from the server (which reads each file's leading comment) rather than being
-// duplicated here — the page and the file cannot then disagree about what a check proves.
+// Descriptions come from the server, which reads each scenario file's leading comment — the page
+// and the file cannot then disagree about what a check proves. Results arrive structured (columns
+// and rows, not pre-formatted text) so each step can be a table with its expectation as the caption.
 
-/** Render a transcript into the panel. `ok === null` means "still running". */
-export function showTranscript(dom, name, lines, ok) {
-  if (!dom.scenarioPanel) return;
-  dom.scenarioPanel.hidden = false;
-  dom.scenarioTitle.textContent =
-    ok == null ? `${name} — running…` : `${name} — ${ok ? 'passed' : 'failed'}`;
-  dom.scenarioTitle.dataset.state = ok == null ? 'unknown' : ok ? 'good' : 'bad';
-  dom.scenarioOutput.textContent = lines.join('\n');
-  dom.scenarioPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+let catalogue = [];
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
 }
 
-/** Build the card list once; wire each card's run button. */
-export function renderScenarioList(dom, api, scenarios, showMessage) {
-  const host = dom.scenarioList;
-  if (!host) return;
+/** One step: the expectation the check states, then what came back. */
+function renderBlock(block, index) {
+  const card = el('section', 'result-card');
+  // The scenario files already phrase these as "expect: …"; strip a duplicated prefix rather than
+  // print "expect: expect: …".
+  const label = (block.expect ?? `step ${index + 1}`).replace(/^expect:\s*/i, '');
+  card.append(el('h3', 'result-card__expect', `expect ${label}`));
+
+  if (block.error) {
+    const err = el('p', 'result-card__error', block.error);
+    card.append(err);
+    return card;
+  }
+
+  if (block.rows.length === 0) {
+    // "Nothing was emitted" is frequently the assertion itself — a held match, a rejected
+    // pattern — so it is stated, not left as an empty frame.
+    card.append(el('p', 'result-card__empty', 'no rows'));
+    return card;
+  }
+
+  const wrap = el('div', 'result-card__scroll');
+  const table = el('table', 'result-table');
+  const thead = el('thead');
+  const hrow = el('tr');
+  for (const name of block.columns) hrow.append(el('th', null, name));
+  thead.append(hrow);
+  const tbody = el('tbody');
+  for (const row of block.rows) {
+    const tr = el('tr');
+    for (const cell of row) {
+      const td = el('td', cell === 'NULL' ? 'result-table__null' : null, cell);
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  wrap.append(table);
+  card.append(wrap);
+  card.append(el('p', 'result-card__count', `${block.rows.length} row${block.rows.length === 1 ? '' : 's'}`));
+  return card;
+}
+
+function renderResults(dom, name, result) {
+  const host = dom.scenarioResults;
   host.textContent = '';
 
-  if (scenarios.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'view__lead';
-    empty.textContent = 'No checks are embedded in this build.';
-    host.append(empty);
-    return;
-  }
+  const head = el('div', 'results__head');
+  const title = el('h2', 'results__title', name.replace(/_/g, ' '));
+  const verdict = el('span', 'results__verdict', result.ok ? 'passed' : 'failed');
+  verdict.dataset.state = result.ok ? 'good' : 'bad';
+  head.append(title, verdict);
+  host.append(head);
 
-  for (const { name, description } of scenarios) {
-    const card = document.createElement('article');
-    card.className = 'check-card';
+  for (const [i, block] of result.blocks.entries()) host.append(renderBlock(block, i));
+}
 
-    const title = document.createElement('h3');
-    title.className = 'check-card__title';
-    // File names are the identifier; a reader wants the words.
-    title.textContent = name.replace(/_/g, ' ');
+function renderRunning(dom, name) {
+  dom.scenarioResults.textContent = '';
+  const head = el('div', 'results__head');
+  head.append(el('h2', 'results__title', name.replace(/_/g, ' ')));
+  const verdict = el('span', 'results__verdict', 'running…');
+  verdict.dataset.state = 'unknown';
+  head.append(verdict);
+  dom.scenarioResults.append(head);
+}
 
-    const body = document.createElement('p');
-    body.className = 'check-card__body';
-    body.textContent = description || 'No description in the scenario file.';
+/** Populate the picker, keep the description in step with it, and wire the run button. */
+export function wireScenarios(dom, api, showMessage) {
+  const select = dom.scenarioSelect;
+  if (!select) return;
 
-    const run = document.createElement('button');
-    run.className = 'btn btn--tonal check-card__run';
-    run.type = 'button';
-    run.textContent = 'run';
-    run.addEventListener('click', async () => {
-      run.disabled = true;
-      run.textContent = 'running…';
-      showTranscript(dom, name, ['running…'], null);
-      try {
-        const { ok, body: result } = await api.scenarioRun(name);
-        const lines = result?.output ?? ['(no output)'];
-        const passed = result?.ok ?? ok;
-        showTranscript(dom, name, lines, passed);
-        card.dataset.state = passed ? 'good' : 'bad';
-        showMessage(passed ? 'info' : 'error', `${name}: ${passed ? 'passed' : 'failed'}`);
-      } finally {
-        run.disabled = false;
-        run.textContent = 'run';
+  const showDescription = () => {
+    const chosen = catalogue.find((s) => s.name === select.value);
+    dom.scenarioDescription.textContent = chosen?.description ?? '';
+  };
+
+  api.scenarioList().then((list) => {
+    catalogue = list;
+    select.textContent = '';
+    for (const { name } of list) {
+      const opt = el('option', null, name.replace(/_/g, ' '));
+      opt.value = name;
+      select.append(opt);
+    }
+    if (list.length === 0) {
+      select.append(el('option', null, 'none embedded'));
+      dom.btnScenarioRun.disabled = true;
+    }
+    showDescription();
+  });
+
+  select.addEventListener('change', showDescription);
+
+  dom.btnScenarioRun?.addEventListener('click', async () => {
+    const name = select.value;
+    if (!name) return;
+    dom.btnScenarioRun.disabled = true;
+    dom.btnScenarioRun.textContent = 'running…';
+    renderRunning(dom, name);
+    try {
+      const { ok, body } = await api.scenarioRun(name);
+      if (body) {
+        renderResults(dom, name, body);
+        showMessage(body.ok ? 'info' : 'error', `${name}: ${body.ok ? 'passed' : 'failed'}`);
+      } else {
+        showMessage('error', `${name}: no result (HTTP ${ok ? 200 : 'error'})`);
       }
-    });
-
-    card.append(title, body, run);
-    host.append(card);
-  }
+    } finally {
+      dom.btnScenarioRun.disabled = false;
+      dom.btnScenarioRun.textContent = 'run check';
+    }
+  });
 }

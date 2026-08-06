@@ -12,7 +12,7 @@ import { renderLatencyChart } from './js/render/chart.js';
 import { renderConnectionBadge, renderStatus, renderMetrics, renderLateness } from './js/render/status.js';
 import { renderLog } from './js/render/log.js';
 import { wireDetails } from './js/render/details.js';
-import { renderScenarioList } from './js/render/scenarios.js';
+import { wireScenarios } from './js/render/scenarios.js';
 
 // A genuinely uncaught exception (a bug in a render callback, say) must not fail silently the
 // way a dropped WebSocket must not: surface it on the page itself, in the same log strip used for
@@ -51,11 +51,10 @@ const dom = {
   latenessSelect: document.getElementById('lateness-select'),
   chipLateness: document.getElementById('chip-lateness'),
   statusLateness: document.getElementById('status-lateness'),
-  scenarioList: document.getElementById('scenario-list'),
-  btnScenarioClose: document.getElementById('btn-scenario-close'),
-  scenarioPanel: document.getElementById('scenario-panel'),
-  scenarioTitle: document.getElementById('scenario-title'),
-  scenarioOutput: document.getElementById('scenario-output'),
+  scenarioSelect: document.getElementById('scenario-select'),
+  scenarioDescription: document.getElementById('scenario-description'),
+  btnScenarioRun: document.getElementById('btn-scenario-run'),
+  scenarioResults: document.getElementById('scenario-results'),
 
   latencyChart: document.getElementById('latency-chart'),
   latencyCaption: document.getElementById('latency-caption'),
@@ -178,9 +177,8 @@ for (const [tabId] of TABS) {
 }
 selectTab('tab-live');
 
-// The check cards, built once from the server's list (name + the prose each scenario file opens
-// with).
-api.scenarioList().then((scenarios) => renderScenarioList(dom, api, scenarios, showMessage));
+// The correctness tab owns its picker, its description text and its results area.
+wireScenarios(dom, api, showMessage);
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
 /** The two header renderers that share a trigger: a status event carries the live lateness, and

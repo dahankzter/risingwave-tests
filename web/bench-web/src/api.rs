@@ -546,12 +546,23 @@ struct ScenarioRequest {
     name: String,
 }
 
+/// One step of a scenario's transcript: the expectation the file states, and the result set that
+/// followed it. Structured rather than pre-formatted text so the page can render a real table —
+/// `1 | NULL | 3` in a monospace block is a transcript, not a result.
+#[derive(Serialize, Default)]
+struct ScenarioBlock {
+    /// The `-- expect: …` line preceding this result, when there was one.
+    expect: Option<String>,
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    /// Set when the statement failed; the page shows it in place of a table.
+    error: Option<String>,
+}
+
 #[derive(Serialize)]
 struct ScenarioResult {
     name: String,
-    /// Statement-by-statement transcript: each `select` with the rows it returned, so the page can
-    /// show what a scenario actually asserted rather than a bare pass/fail.
-    output: Vec<String>,
+    blocks: Vec<ScenarioBlock>,
     ok: bool,
 }
 
@@ -581,38 +592,48 @@ async fn scenario_run(
         let _ = connection.await;
     });
 
-    let mut output = Vec::new();
+    let mut blocks: Vec<ScenarioBlock> = Vec::new();
     let mut ok = true;
+    // The `\echo` line most recently seen: it states the expectation for the result that follows.
+    let mut pending_expect: Option<String> = None;
     for piece in split_scenario(&sql) {
         match piece {
-            Piece::Echo(text) => output.push(format!("-- {text}")),
+            // The files write `\echo 'expect: …'`, so the word is already there — the caption
+            // must not read "expect: expect: …".
+            Piece::Echo(text) => pending_expect = Some(text),
             Piece::Statement(stmt) => {
                 let is_query = stmt.trim_start().to_lowercase().starts_with("select");
                 if is_query {
                     match client.query(&stmt, &[]).await {
-                        Ok(rows) if rows.is_empty() => output.push("(0 rows)".to_string()),
                         Ok(rows) => {
-                            // Header first: `1 | NULL | 3` is unreadable without knowing which
-                            // column is which, and a scenario's whole point is the values it
-                            // asserts.
-                            let names: Vec<&str> =
-                                rows[0].columns().iter().map(|c| c.name()).collect();
-                            output.push(names.join(" | "));
-                            output.push(names.iter().map(|n| "-".repeat(n.len())).collect::<Vec<_>>().join("-+-"));
-                            for row in &rows {
-                                output.push(format_row(row));
-                            }
-                            output.push(format!("({} row{})", rows.len(), if rows.len() == 1 { "" } else { "s" }));
+                            let columns = rows
+                                .first()
+                                .map(|r| r.columns().iter().map(|c| c.name().to_owned()).collect())
+                                .unwrap_or_default();
+                            blocks.push(ScenarioBlock {
+                                expect: pending_expect.take(),
+                                columns,
+                                rows: rows.iter().map(row_cells).collect(),
+                                error: None,
+                            });
                         }
                         Err(e) => {
                             ok = false;
-                            output.push(format!("ERROR: {e}"));
+                            blocks.push(ScenarioBlock {
+                                expect: pending_expect.take(),
+                                error: Some(e.to_string()),
+                                ..Default::default()
+                            });
                             break;
                         }
                     }
                 } else if let Err(e) = client.batch_execute(&stmt).await {
                     ok = false;
-                    output.push(format!("ERROR in {}: {e}", first_words(&stmt)));
+                    blocks.push(ScenarioBlock {
+                        expect: Some(format!("running: {}", first_words(&stmt))),
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    });
                     break;
                 }
             }
@@ -621,9 +642,9 @@ async fn scenario_run(
 
     state.publish(Event::Log {
         level: if ok { "info".to_string() } else { "error".to_string() },
-        text: format!("scenario {}: {}", req.name, if ok { "ran" } else { "failed" }),
+        text: format!("{}: {}", req.name, if ok { "passed" } else { "failed" }),
     });
-    Json(ScenarioResult { name: req.name, output, ok }).into_response()
+    Json(ScenarioResult { name: req.name, blocks, ok }).into_response()
 }
 
 enum Piece {
@@ -658,41 +679,44 @@ fn split_scenario(sql: &str) -> Vec<Piece> {
     pieces
 }
 
-/// A row rendered as `a | b | c`. Dispatches on each column's Postgres type because a scenario's
-/// shape is not known up front and `try_get::<Option<String>>` fails on anything that is not text
-/// — which rendered every integer measure as a `?`, i.e. hid exactly the values a scenario asserts.
-fn format_row(row: &tokio_postgres::Row) -> String {
+/// Every cell of a row as display text.
+fn row_cells(row: &tokio_postgres::Row) -> Vec<String> {
+    (0..row.len()).map(|i| cell_text(row, i)).collect()
+}
+
+/// One cell as display text, `NULL` when absent.
+fn cell_text(row: &tokio_postgres::Row, i: usize) -> String {
+    cell_of(row, i).unwrap_or_else(|| "NULL".to_string())
+}
+
+/// One cell, dispatching on the column's Postgres type: a scenario's shape is not known up front,
+/// and reading everything as text fails on anything that is not (which rendered every integer
+/// measure as a placeholder — hiding exactly the values a check asserts).
+///
+/// `timestamp` and `timestamptz` are deliberately separate arms: they map to different Rust types
+/// (`PrimitiveDateTime` and `OffsetDateTime`), and reading both as the latter fails on the former,
+/// which surfaced as `NULL` — a transcript claiming a check produced no timestamp when it did.
+fn cell_of(row: &tokio_postgres::Row, i: usize) -> Option<String> {
     use tokio_postgres::types::Type;
 
-    fn cell(row: &tokio_postgres::Row, i: usize) -> Option<String> {
-        let ty = row.columns()[i].type_();
-        Some(match *ty {
-            Type::BOOL => row.try_get::<_, Option<bool>>(i).ok()??.to_string(),
-            Type::INT2 => row.try_get::<_, Option<i16>>(i).ok()??.to_string(),
-            Type::INT4 => row.try_get::<_, Option<i32>>(i).ok()??.to_string(),
-            Type::INT8 => row.try_get::<_, Option<i64>>(i).ok()??.to_string(),
-            Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).ok()??.to_string(),
-            Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).ok()??.to_string(),
-            // `timestamp` and `timestamptz` are DIFFERENT Rust types in the `time` mapping:
-            // `PrimitiveDateTime` and `OffsetDateTime`. Reading both as `OffsetDateTime` fails on
-            // the former, and the failure surfaced as `NULL` — a transcript claiming the scenario
-            // produced no timestamp when it produced one.
-            Type::TIMESTAMPTZ => {
-                let ts = row.try_get::<_, Option<time::OffsetDateTime>>(i).ok()??;
-                fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
-            }
-            Type::TIMESTAMP => {
-                let ts = row.try_get::<_, Option<time::PrimitiveDateTime>>(i).ok()??;
-                fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
-            }
-            _ => row.try_get::<_, Option<String>>(i).ok()??,
-        })
-    }
-
-    (0..row.len())
-        .map(|i| cell(row, i).unwrap_or_else(|| "NULL".to_string()))
-        .collect::<Vec<_>>()
-        .join(" | ")
+    let ty = row.columns()[i].type_();
+    Some(match *ty {
+        Type::BOOL => row.try_get::<_, Option<bool>>(i).ok()??.to_string(),
+        Type::INT2 => row.try_get::<_, Option<i16>>(i).ok()??.to_string(),
+        Type::INT4 => row.try_get::<_, Option<i32>>(i).ok()??.to_string(),
+        Type::INT8 => row.try_get::<_, Option<i64>>(i).ok()??.to_string(),
+        Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).ok()??.to_string(),
+        Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).ok()??.to_string(),
+        Type::TIMESTAMPTZ => {
+            let ts = row.try_get::<_, Option<time::OffsetDateTime>>(i).ok()??;
+            fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
+        }
+        Type::TIMESTAMP => {
+            let ts = row.try_get::<_, Option<time::PrimitiveDateTime>>(i).ok()??;
+            fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
+        }
+        _ => row.try_get::<_, Option<String>>(i).ok()??,
+    })
 }
 
 /// Seconds are enough: transcripts are read for values, not sub-second ordering, and a full

@@ -952,6 +952,13 @@ input[type='range']::-moz-range-thumb {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* A view's own `display` (the live tab is a grid) beats the `hidden` attribute's UA rule, so a
+   hidden view kept rendering — both tabs' content on screen at once. Views must therefore state
+   their own hiding, with enough weight to win against their layout rule. */
+.view[hidden] {
+  display: none !important;
+}
+
 /* ---- Tabs ---------------------------------------------------------------- */
 /* Three peer views. "Is it correct" sits beside "is it fast" rather than under it — a disclosure
    panel would have implied the correctness checks are a footnote. */
@@ -995,43 +1002,151 @@ input[type='range']::-moz-range-thumb {
   padding: var(--space-4, 1rem);
 }
 
-/* ---- Check cards -------------------------------------------------------- */
-.scenario-list {
+/* ---- Correctness tab ----------------------------------------------------- */
+/* A quarter for choosing, three quarters for reading: a check is picked once and its results are
+   read line by line. */
+.correctness {
   display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
   gap: var(--space-4, 1rem);
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  margin-bottom: var(--space-4, 1rem);
+  padding: var(--space-4, 1rem);
+  align-items: start;
 }
 
-.check-card {
+@media (max-width: 60rem) {
+  .correctness {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.correctness__picker {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 14px 16px;
+  gap: 12px;
+  padding: 16px;
   border-radius: var(--md-sys-shape-corner-m, 12px);
   background: var(--md-sys-color-surface-container);
-  /* The result colours the card's edge, so a page of cards reads as a checklist after a run. */
-  border-left: 3px solid transparent;
+  position: sticky;
+  top: 12px;
 }
 
-.check-card[data-state='good'] { border-left-color: var(--bench-good); }
-.check-card[data-state='bad'] { border-left-color: var(--bench-bad); }
-
-.check-card__title {
-  margin: 0;
-  font-size: var(--md-sys-typescale-title-small-size, 0.875rem);
-  color: var(--md-sys-color-on-surface);
+.select-control--block {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
-.check-card__body {
+.correctness__description {
   margin: 0;
-  flex: 1;
   font-size: var(--md-sys-typescale-body-small-size, 0.75rem);
+  line-height: 1.55;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* The invariant every check shares, stated once and kept out of the way. */
+.correctness__note {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  font-size: 0.6875rem;
   line-height: 1.5;
   color: var(--md-sys-color-on-surface-variant);
 }
 
-.check-card__run {
-  margin-top: 4px;
+.correctness__results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0; /* let wide tables scroll inside their card instead of stretching the grid */
+}
+
+.results__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.results__title {
+  margin: 0;
+  font-size: var(--md-sys-typescale-title-medium-size, 1rem);
+}
+
+.results__verdict {
+  font-size: var(--md-sys-typescale-label-medium-size, 0.75rem);
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.results__verdict[data-state='good'] { background: var(--bench-good-bg); color: var(--bench-good); }
+.results__verdict[data-state='bad'] { background: var(--bench-bad-bg); color: var(--bench-bad); }
+
+/* ---- One result step ----------------------------------------------------- */
+.result-card {
+  padding: 12px 14px;
+  border-radius: var(--md-sys-shape-corner-m, 12px);
+  background: var(--md-sys-color-surface-container);
+  min-width: 0;
+}
+
+/* The expectation reads as the caption of the table under it — that pairing is the whole point. */
+.result-card__expect {
+  margin: 0 0 8px;
+  font-size: var(--md-sys-typescale-label-large-size, 0.875rem);
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+}
+
+.result-card__empty,
+.result-card__count {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.result-card__error {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--bench-bad);
+}
+
+.result-card__scroll {
+  overflow-x: auto;
+}
+
+.result-table {
+  border-collapse: collapse;
+  width: auto;
+  min-width: 100%;
+  font-size: 0.8125rem;
+}
+
+.result-table th,
+.result-table td {
+  text-align: left;
+  padding: 6px 12px 6px 0;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  white-space: nowrap;
+}
+
+.result-table th {
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.result-table td {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--md-sys-color-on-surface);
+}
+
+/* A NULL is a value, and a dimmed one reads as absent — which is what it is. */
+.result-table__null {
+  color: var(--md-sys-color-on-surface-variant);
+  font-style: italic;
 }
