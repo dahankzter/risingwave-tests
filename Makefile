@@ -14,12 +14,12 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report console metrics test
+.PHONY: help info up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report console metrics test
 
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
 help:
-	@echo "usage: make <target>"
+	@echo "usage: make <target>      (new here? run: make info)"
 	@echo
 	@echo "  # cluster"
 	@echo "  up                       start the pinned image (recreates any leftover container)"
@@ -51,6 +51,48 @@ help:
 	@echo
 	@echo "image: $(RW_IMAGE)"
 	@echo "psql:  $(PSQL)   (override with PSQL=...)"
+
+# Getting started, by intent rather than by target. `help` lists what exists; this says which
+# three commands to type depending on why you are here.
+info:
+	@echo "This is a test bench for RisingWave builds carrying MATCH_RECOGNIZE."
+	@echo "It runs a published image in podman and drives SQL against it. Nothing here"
+	@echo "needs a RisingWave source tree."
+	@echo
+	@echo "Prerequisites"
+	@echo "  podman        (this bench does not use docker)"
+	@echo "  Rust >= 1.95  for the workload generator and the console"
+	@echo "  psql          on a Mac with keg-only libpq:"
+	@echo "                  export PSQL=/opt/homebrew/opt/libpq/bin/psql"
+	@echo
+	@echo "1. Demo it (the console drives the cluster itself — no 'make up' first)"
+	@echo "     make console"
+	@echo "   Open http://127.0.0.1:3000, then in the page: cluster up ->"
+	@echo "   rebuild pipeline -> start load. The feed fills, the gauges move, and the"
+	@echo "   details tab shows percentiles, operator counters and how trustworthy the"
+	@echo "   host is. Add PIN=1 to partition the cores first."
+	@echo
+	@echo "2. Check a build is correct"
+	@echo "     make up && make smoke"
+	@echo "   Runs every scenario in scenarios/semantics/ and asserts the output against"
+	@echo "   expected/. This is the gate to run against a newly published image."
+	@echo
+	@echo "3. Measure it"
+	@echo "     make up && make bench                 # realtime: latency, both ways"
+	@echo "     make load-setup && make load PROFILE=fraud   # bulk: ingest throughput"
+	@echo "   PROFILE=small|fraud|hotspot; ROWS=, RATE=, ROUNDS= override the rest."
+	@echo "   Numbers measured on Apple Silicon are emulated: shape-checks, not"
+	@echo "   measurements. The console's details tab labels this for you."
+	@echo
+	@echo "When something looks wrong"
+	@echo "  make logs        follow the container"
+	@echo "  make metrics     operator counters straight off the compute node (:1222)"
+	@echo "  make psql        poke at the data yourself"
+	@echo "  make clean       drop the data volume — REQUIRED when switching to an image"
+	@echo "                   with a different wire format, otherwise the new build aborts"
+	@echo "                   during barrier recovery on the old state"
+	@echo
+	@echo "  make help        the full target list"
 
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).

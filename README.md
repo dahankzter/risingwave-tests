@@ -7,6 +7,9 @@ scenario scripts, adversarial patterns, and performance probes run against publi
 
 ## Usage
 
+`make info` prints a getting-started walkthrough — the three paths (demo it, check a build, measure
+it) and what to do when something looks wrong. `make help` lists every target.
+
 ```sh
 make up                # start a single-node RisingWave from $RW_IMAGE (podman run)
 make psql              # interactive session on :4566
