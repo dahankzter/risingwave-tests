@@ -163,6 +163,15 @@
 
 /* ---- reset / base ---------------------------------------------------------------------------- */
 
+/* `hidden` must actually hide. Any element that sets its own `display` (a grid view, a flex tree,
+   a card) outweighs the attribute's UA rule, so hiding it silently does nothing — which is how a
+   view rendered behind another tab and a collapsed plan tree stayed on screen with its toggle
+   apparently dead. Stated once here rather than per class, because the next element with a
+   `display` of its own would hit it too. */
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -950,13 +959,6 @@ input[type='range']::-moz-range-thumb {
 
 .scenario__hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-/* A view's own `display` (the live tab is a grid) beats the `hidden` attribute's UA rule, so a
-   hidden view kept rendering — both tabs' content on screen at once. Views must therefore state
-   their own hiding, with enough weight to win against their layout rule. */
-.view[hidden] {
-  display: none !important;
 }
 
 /* ---- Tabs ---------------------------------------------------------------- */
