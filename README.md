@@ -82,6 +82,12 @@ aborts at startup (barrier recovery bootstrap crash).
   `--sentinel-partition`. Don't go looking for them.
 - `expected/` — recorded scenario output. This is what `make smoke` asserts against.
 
+## Building
+
+The Rust workspace is under `web/` and needs stable Rust 1.95 or newer — nothing in it requires a
+nightly or a newer toolchain, deliberately, so a colleague with a stock `rustup` can build the
+console. `make test` runs the workspace's unit tests.
+
 ## The demo console
 
 ```sh

@@ -14,7 +14,7 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report
+.PHONY: help up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report console metrics test
 
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
@@ -43,6 +43,11 @@ help:
 	@echo "    rt-load [RATE=][ROWS=] ... background traffic"
 	@echo "    latency [ROUNDS=]      ... [1] client probe: insert -> visible in mv_rt"
 	@echo "    lat-report             ... [2] server-side: every match, incl. the sink hop"
+	@echo
+	@echo "  # console"
+	@echo "  console [PIN=1] [PORT=]  the demo web console (cluster, load, feed, details tab)"
+	@echo "  metrics                  operator counters straight off the compute node (:1222)"
+	@echo "  test                     the Rust workspace's unit tests"
 	@echo
 	@echo "image: $(RW_IMAGE)"
 	@echo "psql:  $(PSQL)   (override with PSQL=...)"
@@ -153,3 +158,25 @@ latency:
 # [2] server-side: the proctime stamps every match recorded for itself, over the whole load.
 lat-report:
 	@$(PSQL) $(PSQLFLAGS) -f latency/report.sql
+
+# ---- Console ---------------------------------------------------------------------------------
+# The demo UI. It drives the cluster itself (podman up/down/clean), so `make up` is not a
+# prerequisite — start the console and press "cluster up". PIN=1 partitions the cores; see the
+# README's pinning section for what that does and does not buy on each platform.
+CONSOLE = web/target/release/bench-web
+
+$(CONSOLE):
+	cd web && cargo build --release
+
+console: $(CONSOLE)
+	RW_IMAGE=$(RW_IMAGE) $(CONSOLE) --bind 127.0.0.1:$(or $(PORT),3000) $(if $(PIN),--pin)
+
+# The three MATCH_RECOGNIZE counters, unaggregated, straight from the compute node's Prometheus
+# endpoint — the same numbers the console's details tab sums. Useful without the UI, and the first
+# thing to check if that tab shows dashes.
+metrics:
+	@curl -fsS localhost:1222/metrics | grep '^stream_match_recognize' \
+		|| echo "no metrics on :1222 (is the cluster up, and is the port published?)"
+
+test:
+	cd web && cargo test --workspace
