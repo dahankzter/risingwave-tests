@@ -1,42 +1,36 @@
-//! `POST /api/probe/start`: runs `latency/probe.sh` (embedded into the binary — see
-//! `embedded.rs` — so this works regardless of the server's CWD, same reasoning as the setup
-//! SQL) as a child process, streaming each round's result as `Event::Probe` and the final
-//! summary line as `Event::Log`.
+//! `POST /api/probe/start`: the client-side latency measurement. For each round it drives one
+//! chain of its own through the pipeline — deposit, bet, then the completing withdraw — and times
+//! how long the match takes to become visible in `mv_rt`, publishing each round as `Event::Probe`
+//! and a p50/p95 summary as `Event::Log`.
 //!
-//! The one thing this handler must get right that a naive "just run the script" would not:
-//! `SENTINEL` in the child's environment. `probe.sh` defaults to `SENTINEL=on`, which lets it
-//! advance the watermark itself so it works standalone with no background traffic. But those
-//! sentinel rows carry `now()`, which outruns a paced load's event time and releases the load's
-//! own matches early — measured on the rig, running the probe alongside a feed dropped that
-//! feed's server-side p50 from 7.236s to 3.396s (see `setup_realtime.sql`'s header and
-//! `probe.sh`'s own comment). So: `SENTINEL=off` whenever a load is running, `on` otherwise.
+//! Why this exists next to the server-side numbers the alert stream already produces: the stream's
+//! percentiles cover every match the current load happens to produce, whereas this drives a known
+//! chain and measures it end to end, including the query that a consumer would actually run. Two
+//! measurements that agree are worth more than either alone.
+//!
+//! This talks to the database directly rather than shelling out to `latency/probe.sh`. The script
+//! remains the CLI path (`make latency`), but running it from the server meant depending on a
+//! `psql` binary on PATH — which on a Mac with keg-only libpq is not there, and the failure
+//! surfaced as `exited with exit status: 127`, a message that says nothing about what was missing.
+//! The console already holds a Postgres client; using it removes the dependency and the whole
+//! class of environment breakage with it.
+//!
+//! The one subtlety, unchanged from the script: sentinel rows. The probe can advance the watermark
+//! itself so it works with no background traffic — but those rows carry `now()`, which outruns a
+//! paced load's event time and releases the load's own matches early (measured on the rig: a
+//! feed's server-side p50 fell from 7.236s to 3.396s with a sentinel-emitting probe alongside).
+//! So sentinels are only emitted when no load is running.
 
-use crate::embedded;
 use crate::event::Event;
 use crate::state::AppState;
-use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use std::time::{Duration, Instant};
 
 /// `true` (a load is running) forces the sentinel off; `false` leaves it on so the probe still
 /// works with no background traffic. Pulled out as a pure function so the decision is testable
 /// without spawning anything.
 pub fn sentinel_for(load_running: bool) -> &'static str {
     if load_running { "off" } else { "on" }
-}
-
-/// Parses one `probe.sh` stdout line of the form `round 3: 6318 ms` into `(round, latency_ms)`.
-/// The script's `TIMEOUT` line goes to stderr, not stdout (see `probe.sh`), so it — and anything
-/// else that isn't a round line, in particular the final `rounds=... p50=...` summary — falls
-/// through to `None` and is forwarded as `Event::Log` by the caller instead.
-pub fn parse_round_line(line: &str) -> Option<(u32, u64)> {
-    let rest = line.strip_prefix("round ")?;
-    let (round_s, rest) = rest.split_once(": ")?;
-    let ms_s = rest.strip_suffix(" ms")?;
-    let round: u32 = round_s.trim().parse().ok()?;
-    let latency_ms: u64 = ms_s.trim().parse().ok()?;
-    Some((round, latency_ms))
 }
 
 /// Runs the probe to completion and always clears `state.probe_running` on the way out, however
@@ -56,56 +50,109 @@ pub async fn run_probe(state: Arc<AppState>, rounds: u32, sentinel: &'static str
 }
 
 async fn execute(state: &Arc<AppState>, rounds: u32, sentinel: &'static str) -> anyhow::Result<()> {
-    let script = embedded::probe_script();
+    const TABLE: &str = "t_rt";
+    const MV: &str = "mv_rt";
+    /// Poll interval while waiting for a match to appear. Fine-grained enough not to inflate a
+    /// sub-second measurement, coarse enough not to hammer the frontend.
+    const POLL: Duration = Duration::from_millis(20);
+    /// Give up on a round after this. A probe that hangs forever would look identical to a probe
+    /// that is merely slow, and the panel would never say which.
+    const ROUND_TIMEOUT: Duration = Duration::from_secs(60);
 
-    let mut child = Command::new("bash")
-        .arg("-s")
-        .env("ROUNDS", rounds.to_string())
-        .env("SENTINEL", sentinel)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let mut stdin = child.stdin.take().expect("stdin was requested piped");
-    let writer = tokio::spawn(async move {
-        // Errors here (a broken pipe if the child already exited) are surfaced by `child.wait()`
-        // below, not here — this task's only job is to hand the script over and then close the
-        // pipe (by dropping `stdin`) so `bash -s` sees EOF and starts running.
-        let _ = stdin.write_all(&script).await;
+    let (client, connection) =
+        tokio_postgres::connect(&state.db_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(async move {
+        let _ = connection.await;
     });
 
-    let stdout = child.stdout.take().expect("stdout was requested piped");
-    let stderr = child.stderr.take().expect("stderr was requested piped");
+    // Probe partitions must not collide with the generator's (1..=partitions) or with a previous
+    // probe's leftovers: a reused key lets an old row satisfy the poll instantly and fake a fast
+    // round. Derived from the wall clock, one block of ids per run.
+    let base: i32 = 1_000_000
+        + ((std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            % 100_000) as i32)
+            * 10;
 
-    let state_out = state.clone();
-    let out_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            match parse_round_line(&line) {
-                Some((round, latency_ms)) => state_out.publish(Event::Probe { round, latency_ms }),
-                // Covers the final `rounds=... p50=...ms ...` summary line in particular.
-                None => state_out
-                    .publish(Event::Log { level: "info".to_string(), text: format!("probe: {line}") }),
+    let mut samples: Vec<u64> = Vec::with_capacity(rounds as usize);
+    for round in 0..rounds {
+        let pid = base + round as i32;
+
+        // The chain's opening rows. Their own timing does not matter — the measurement starts at
+        // the completing row, which is what a detector is waiting for.
+        client
+            .execute(
+                &format!(
+                    "insert into {TABLE} (id, ts, kind, amount) values \
+                     ($1, now(), 'deposit', 100), ($1, now(), 'bet', 10)"
+                ),
+                &[&pid],
+            )
+            .await?;
+
+        let started = Instant::now();
+        client
+            .execute(
+                &format!(
+                    "insert into {TABLE} (id, ts, kind, amount) values ($1, now(), 'withdraw', 90)"
+                ),
+                &[&pid],
+            )
+            .await?;
+
+        let mut polls: u32 = 0;
+        loop {
+            let seen: i64 = client
+                .query_one(&format!("select count(*) from {MV} where partition_0 = $1"), &[&pid])
+                .await?
+                .get(0);
+            if seen > 0 {
+                break;
             }
+            if started.elapsed() > ROUND_TIMEOUT {
+                anyhow::bail!(
+                    "round {round} timed out after {}s with no match — is the pipeline emitting?",
+                    ROUND_TIMEOUT.as_secs()
+                );
+            }
+            // Keep the watermark moving when nothing else is: without new event time the sort
+            // never releases the withdraw row and the match cannot finalise. Sentinel rows are
+            // suppressed while a load is running (see the module doc).
+            polls += 1;
+            if sentinel == "on" && polls.is_multiple_of(10) {
+                client
+                    .execute(
+                        &format!(
+                            "insert into {TABLE} (id, ts, kind, amount) \
+                             values (0, now(), 'noop', 0)"
+                        ),
+                        &[],
+                    )
+                    .await?;
+            }
+            tokio::time::sleep(POLL).await;
         }
-    });
 
-    let state_err = state.clone();
-    let err_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            state_err.publish(Event::Log { level: "warn".to_string(), text: format!("probe: {line}") });
-        }
-    });
-
-    let _ = writer.await;
-    let _ = out_task.await;
-    let _ = err_task.await;
-    let status = child.wait().await?;
-    if !status.success() {
-        anyhow::bail!("probe.sh exited with {status}");
+        let ms = started.elapsed().as_millis() as u64;
+        samples.push(ms);
+        state.publish(Event::Probe { round, latency_ms: ms });
     }
+
+    samples.sort_unstable();
+    let pick = |q: f64| samples[((q * samples.len() as f64) as usize).min(samples.len() - 1)];
+    state.publish(Event::Log {
+        level: "info".to_string(),
+        text: format!(
+            "probe: {} round(s) — p50 {}ms p95 {}ms min {}ms max {}ms (sentinel={sentinel})",
+            samples.len(),
+            pick(0.5),
+            pick(0.95),
+            samples[0],
+            samples[samples.len() - 1]
+        ),
+    });
     Ok(())
 }
 
@@ -123,26 +170,6 @@ mod tests {
         assert_eq!(sentinel_for(false), "on");
     }
 
-    #[test]
-    fn parses_a_round_line() {
-        assert_eq!(parse_round_line("round 3: 6318 ms"), Some((3, 6318)));
-        assert_eq!(parse_round_line("round 0: 42 ms"), Some((0, 42)));
-    }
 
-    #[test]
-    fn does_not_mistake_the_timeout_line_or_the_summary_line_for_a_round() {
-        assert_eq!(
-            parse_round_line(
-                "round 2: TIMEOUT after 30s+ — pipeline not emitting (check the MV and watermark)"
-            ),
-            None,
-        );
-        assert_eq!(parse_round_line("rounds=8 p50=6318ms p95=6318ms min=6318ms max=6318ms"), None);
-    }
 
-    #[test]
-    fn rejects_garbage_that_merely_starts_with_round() {
-        assert_eq!(parse_round_line("round: not really a round line"), None);
-        assert_eq!(parse_round_line("roundup: 5 ms"), None);
-    }
 }
