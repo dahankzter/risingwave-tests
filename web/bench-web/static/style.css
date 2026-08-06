@@ -929,3 +929,14 @@ input[type='range']::-moz-range-thumb {
   white-space: pre-wrap;
   color: var(--md-sys-color-on-surface);
 }
+
+/* A selector that disagrees with the live pipeline: amber, because nothing is wrong yet — a
+   rebuild is simply outstanding, and the numbers on screen still belong to the old setting. */
+.status-chip[data-state='pending'] {
+  background: color-mix(in srgb, #f59e0b 22%, var(--md-sys-color-surface-container-high));
+  color: var(--md-sys-color-on-surface);
+}
+
+.status-chip[data-state='pending'] b {
+  color: #f59e0b;
+}

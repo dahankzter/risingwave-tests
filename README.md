@@ -105,6 +105,11 @@ operator metrics, pipeline state, and the run environment.
 The top bar also carries two demo levers:
 
 - **lateness** — the watermark tolerance the pipeline is rebuilt with (5s default, or 10/1/0s).
+  Changing the dropdown does not change the pipeline: the declaration lives in the table's DDL, so
+  it takes a rebuild. The header therefore shows a `watermark` chip read from the *live* table, and
+  when the selector disagrees it reads `5s → 1s pending` in amber and the button says
+  `rebuild pipeline (1s)` — so an unapplied change cannot quietly misattribute four seconds of
+  every latency on screen.
   Since most of the reported latency *is* this number, switching it and rebuilding turns "latency
   is a policy dial, not an engine limit" into something you can show rather than assert. The
   server refuses the rebuild if it cannot find the declaration to rewrite, rather than reporting a

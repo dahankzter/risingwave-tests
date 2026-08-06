@@ -350,10 +350,11 @@ async fn pipeline_rebuild(
     }
 
     if let Some(secs) = req.lateness_secs {
-        state.set_lateness(Some(secs));
+        // Not recorded as state here: the status poller reads the live table's own declaration, so
+        // what the console reports is always what the pipeline has rather than what was asked for.
         state.publish(Event::Log {
             level: "info".to_string(),
-            text: format!("pipeline: watermark lateness now {secs}s"),
+            text: format!("pipeline: rebuilt with watermark lateness {secs}s"),
         });
     }
     state.set_status(|s| s.pipeline = "rebuilt".to_string());

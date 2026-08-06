@@ -18,6 +18,9 @@
       <span class="status-chip">cluster <b id="status-cluster">unknown</b></span>
       <span class="status-chip">pipeline <b id="status-pipeline">unknown</b></span>
       <span class="status-chip">load <b id="status-load">stopped</b></span>
+      <!-- The lateness the LIVE table declares, not the selector's value: most of the reported
+           latency is this number, so the header must show the pipeline that exists. -->
+      <span class="status-chip" id="chip-lateness" hidden>watermark <b id="status-lateness">&mdash;</b></span>
     </div>
 
     <div class="topbar__controls">

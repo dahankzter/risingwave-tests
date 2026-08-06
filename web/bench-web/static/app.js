@@ -9,7 +9,7 @@ import { wireControls } from './js/controls.js';
 import { renderFeed, renderFeedCaption } from './js/render/feed.js';
 import { renderRowsGauge, renderAlertsGauge } from './js/render/gauges.js';
 import { renderLatencyChart } from './js/render/chart.js';
-import { renderConnectionBadge, renderStatus, renderMetrics } from './js/render/status.js';
+import { renderConnectionBadge, renderStatus, renderMetrics, renderLateness } from './js/render/status.js';
 import { renderLog } from './js/render/log.js';
 import { wireDetails } from './js/render/details.js';
 
@@ -48,6 +48,8 @@ const dom = {
   gaugeAlertsValue: document.getElementById('gauge-alerts-value'),
   gaugeAlertsDial: document.getElementById('gauge-alerts-dial'),
   latenessSelect: document.getElementById('lateness-select'),
+  chipLateness: document.getElementById('chip-lateness'),
+  statusLateness: document.getElementById('status-lateness'),
   scenarioSelect: document.getElementById('scenario-select'),
   btnScenarioRun: document.getElementById('btn-scenario-run'),
   btnScenarioClose: document.getElementById('btn-scenario-close'),
@@ -86,7 +88,7 @@ const store = new Store();
 store.addEventListener('connection', () => renderConnectionBadge(dom.connBadge, store.connection));
 
 store.addEventListener('status', () =>
-  renderStatus({ clusterEl: dom.statusCluster, pipelineEl: dom.statusPipeline, loadEl: dom.statusLoad }, store.status),
+  renderStatusAndLateness(),
 );
 
 store.addEventListener('feed', (ev) => {
@@ -155,7 +157,23 @@ wireControls(dom, api, showMessage);
 wireDetails(store);
 
 // Initial paint before the first events arrive, so the page isn't visually empty for a moment.
+/** The two header renderers that share a trigger: a status event carries the live lateness, and
+ * the selector's own change must re-render the comparison immediately rather than waiting for the
+ * next poll. */
+function renderStatusAndLateness() {
+  renderStatus(
+    { clusterEl: dom.statusCluster, pipelineEl: dom.statusPipeline, loadEl: dom.statusLoad },
+    store.status,
+  );
+  renderLateness(
+    { chipEl: dom.chipLateness, valueEl: dom.statusLateness, rebuildBtn: dom.btnPipelineRebuild },
+    store.liveLateness ?? null,
+    dom.latenessSelect?.value ?? '',
+  );
+}
+dom.latenessSelect?.addEventListener('change', renderStatusAndLateness);
+
 renderConnectionBadge(dom.connBadge, store.connection);
-renderStatus({ clusterEl: dom.statusCluster, pipelineEl: dom.statusPipeline, loadEl: dom.statusLoad }, store.status);
+renderStatusAndLateness();
 renderFeedCaption(dom.feedCaption, 0);
 renderLatencyChart(dom.latencyChart, dom.latencyCaption, store.statsHistory);

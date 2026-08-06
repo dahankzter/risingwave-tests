@@ -33,6 +33,10 @@ pub enum Event {
         cluster: String,
         pipeline: String,
         load: String,
+        /// Watermark lateness the LIVE table declares, read from the catalog each poll. `None` when
+        /// there is no pipeline to describe. The page compares this against the selector so an
+        /// unapplied change is visible instead of silently misattributing seconds.
+        lateness_secs: Option<u32>,
     },
     Metrics {
         matches_emitted: u64,

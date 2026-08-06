@@ -31,6 +31,18 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// interpolated directly rather than bound as parameters — `rw_catalog.rw_tables.name = any($1)`
 /// against a `&[&str]` parameter is the more "correct" shape, but a plain `in (...)` avoids
 /// depending on tokio-postgres's array-of-text encoding matching what `rw_catalog` expects.
+/// The watermark lateness the live table actually declares, in seconds. Read from the catalog
+/// rather than remembered from the last rebuild request: the console must report the pipeline it
+/// has, not the pipeline someone intended — a dropdown left at 1s while the table still says 5s
+/// otherwise misattributes four seconds of every latency it displays.
+async fn live_lateness_secs(client: &tokio_postgres::Client) -> Option<u32> {
+    let ddl: String = client.query_one("show create table t_rt", &[]).await.ok()?.try_get(1).ok()?;
+    // `... WATERMARK FOR ts AS ts - INTERVAL '5' SECOND) APPEND ONLY`
+    let after = ddl.split("INTERVAL '").nth(1)?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 async fn pipeline_present(db_url: &str) -> anyhow::Result<bool> {
     let (client, connection) = tokio_postgres::connect(db_url, tokio_postgres::NoTls).await?;
     tokio::spawn(async move {
@@ -67,9 +79,22 @@ pub async fn probe_once(state: &AppState) {
         Err(_) => "unknown",
     };
 
+    // Reading the live lateness needs its own connection; only worth opening when the cluster is
+    // up and the pipeline is there to describe.
+    let mut lateness = None;
     let pipeline = match cluster {
         "up" => match pipeline_present(&state.db_url).await {
-            Ok(true) => "present",
+            Ok(true) => {
+                if let Ok((client, connection)) =
+                    tokio_postgres::connect(&state.db_url, tokio_postgres::NoTls).await
+                {
+                    tokio::spawn(async move {
+                        let _ = connection.await;
+                    });
+                    lateness = live_lateness_secs(&client).await;
+                }
+                "present"
+            }
             Ok(false) => "absent",
             Err(_) => "unknown",
         },
@@ -79,12 +104,18 @@ pub async fn probe_once(state: &AppState) {
         _ => "unknown",
     };
 
+    state.set_lateness(lateness);
     state.set_status(|s| {
         s.cluster = cluster.to_string();
         s.pipeline = pipeline.to_string();
     });
     let snap = state.status_snapshot();
-    state.publish(Event::Status { cluster: snap.cluster, pipeline: snap.pipeline, load: snap.load });
+    state.publish(Event::Status {
+        cluster: snap.cluster,
+        pipeline: snap.pipeline,
+        load: snap.load,
+        lateness_secs: lateness,
+    });
 }
 
 /// Spawns the poller: one `probe_once` immediately (so a page opened right after the server

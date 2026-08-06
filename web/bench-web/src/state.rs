@@ -159,7 +159,12 @@ impl AppState {
     pub fn snapshot_event(&self) -> Event {
         let status = self.status_snapshot();
         Event::Snapshot {
-            status: Box::new(Event::Status { cluster: status.cluster, pipeline: status.pipeline, load: status.load }),
+            status: Box::new(Event::Status {
+                cluster: status.cluster,
+                pipeline: status.pipeline,
+                load: status.load,
+                lateness_secs: self.lateness_secs(),
+            }),
             recent: self.recent_snapshot(),
             stats: self.last_stats_snapshot().map(Box::new),
         }

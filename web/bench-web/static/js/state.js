@@ -47,6 +47,7 @@ export class Store extends EventTarget {
         this._pushStats(ev);
         break;
       case 'status':
+        this.liveLateness = ev.lateness_secs ?? null;
         this.status = { cluster: ev.cluster, pipeline: ev.pipeline, load: ev.load };
         this.dispatchEvent(new CustomEvent('status'));
         break;

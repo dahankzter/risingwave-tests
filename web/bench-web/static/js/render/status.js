@@ -25,6 +25,29 @@ function state(value) {
   return 'unknown';
 }
 
+/** The live watermark chip, and whether the selector disagrees with it. A selector left at 1s
+ * while the table still says 5s is the trap this exists to close: changing a dropdown cannot
+ * rebuild a pipeline on its own, and without this the page would keep reporting latencies whose
+ * biggest component is not the number on screen. */
+export function renderLateness(els, liveSecs, selectedRaw) {
+  const { chipEl, valueEl, rebuildBtn } = els;
+  if (!chipEl || !valueEl) return;
+  if (liveSecs == null) {
+    chipEl.hidden = true;
+    if (rebuildBtn) rebuildBtn.textContent = 'rebuild pipeline';
+    return;
+  }
+  chipEl.hidden = false;
+  const selected = selectedRaw === '' ? 5 : Number(selectedRaw);
+  const pending = selected !== liveSecs;
+  valueEl.textContent = pending ? `${liveSecs}s \u2192 ${selected}s pending` : `${liveSecs}s`;
+  chipEl.dataset.state = pending ? 'pending' : 'good';
+  // Say what pressing the button will do, so the change is not silently unapplied.
+  if (rebuildBtn) {
+    rebuildBtn.textContent = pending ? `rebuild pipeline (${selected}s)` : 'rebuild pipeline';
+  }
+}
+
 export function renderStatus(els, status) {
   for (const [el, value] of [
     [els.clusterEl, status.cluster],
