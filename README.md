@@ -129,6 +129,10 @@ Four tabs over the same cluster:
 - **details** — latency and throughput, the operator metrics, pipeline state, and the run
   environment (which labels its own trustworthiness).
 
+Why a result appears when it does — barrier-gated vs watermark-gated, and the case where a quiet
+stream stops emitting altogether — is written up in [`docs/latency-model.md`](docs/latency-model.md),
+with a `make latency-model` harness that reproduces its numbers on whatever machine you are on.
+
 The top bar keeps the cluster and load controls: up/down, pipeline rebuild with the watermark
 lateness selector, load start/stop with a live rate slider, and the end-to-end timing check.
 

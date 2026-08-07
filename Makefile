@@ -14,7 +14,7 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: help info up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report console metrics test
+.PHONY: help info up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report latency-model console metrics test
 
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
@@ -43,6 +43,7 @@ help:
 	@echo "    rt-load [RATE=][ROWS=] ... background traffic"
 	@echo "    latency [ROUNDS=]      ... [1] client probe: insert -> visible in mv_rt"
 	@echo "    lat-report             ... [2] server-side: every match, incl. the sink hop"
+	@echo "  latency-model [REPEAT=]  why a result is visible when it is: barrier vs watermark"
 	@echo
 	@echo "  # console"
 	@echo "  console [PIN=1] [PORT=]  the demo web console (cluster, load, feed, details tab)"
@@ -196,6 +197,14 @@ bench:
 # [1] client-side: insert, then poll mv_rt until the match appears.
 latency:
 	PSQL=$(PSQL) ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh
+
+# The two clocks that decide when a result becomes visible: barrier-gated vs watermark-gated, plus
+# the starvation case where a quiet stream stops emitting entirely. Produces the table in
+# docs/latency-model.md. Needs the console running (`make console`) and nothing else installed.
+latency-model:
+	python3 scenarios/perf/latency_model.py \
+	  --console http://127.0.0.1:$(or $(PORT),3000) \
+	  --repeat $(or $(REPEAT),5)
 
 # [2] server-side: the proctime stamps every match recorded for itself, over the whole load.
 lat-report:
