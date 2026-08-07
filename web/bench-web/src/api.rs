@@ -895,6 +895,11 @@ fn cell_of(row: &tokio_postgres::Row, i: usize) -> Option<String> {
         Type::INT8 => row.try_get::<_, Option<i64>>(i).ok()??.to_string(),
         Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).ok()??.to_string(),
         Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).ok()??.to_string(),
+        // sum() and avg() over an integer column return NUMERIC, not an integer — so without this
+        // arm every aggregate in the playground rendered as NULL, which is the worst possible
+        // failure for a SQL tool: a plausible-looking answer that is silently wrong. A bare
+        // `select 1.5` reproduced it.
+        Type::NUMERIC => row.try_get::<_, Option<rust_decimal::Decimal>>(i).ok()??.normalize().to_string(),
         Type::TIMESTAMPTZ => {
             let ts = row.try_get::<_, Option<time::OffsetDateTime>>(i).ok()??;
             fmt_datetime(ts.year(), u8::from(ts.month()), ts.day(), ts.hour(), ts.minute(), ts.second())
