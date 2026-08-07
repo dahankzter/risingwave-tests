@@ -81,11 +81,14 @@ pub struct ServeConfig {
 /// killed. Binding to anything other than loopback is allowed (`--bind` overrides the default),
 /// but `main` is responsible for the startup warning — this function only serves.
 pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
-    // Pin this process before anything spawns: the reader, aggregator and status poller inherit
-    // the affinity mask, so they land on the bench cores too.
-    if let Some(layout) = &cfg.pin_layout {
-        pin::apply_to_self(layout)?;
-    }
+    // Process-wide pinning is already done by the time this runs: when `cfg.pin_layout` is set,
+    // `main` builds the tokio runtime with an `on_thread_start` hook that pins every worker and
+    // blocking-pool thread to the bench cores as it starts (a plain call to `pin::apply_to_self`
+    // here would only pin the single thread that called it — `sched_setaffinity` is per-thread,
+    // not per-process — which is exactly the bug this hook exists to avoid). So the reader,
+    // aggregator and status poller spawned below do land on the bench cores, but because every
+    // runtime thread was pinned before it ran any task, not because affinity is inherited from
+    // this one.
     let cpuset = cfg.pin_layout.as_ref().and_then(|l| l.cluster.clone());
     let state = Arc::new(AppState::new(
         Arc::new(PodmanDriver::new(cfg.container_name, cfg.image.clone()).with_cpuset(cpuset)),

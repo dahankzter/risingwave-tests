@@ -1,17 +1,29 @@
 //! CPU pinning: keep the load generator off the cores the cluster is measured on.
 //!
-//! Two cores are reserved for the bench process, the rest go to the container. The part that
-//! actually buys the isolation is `parallelism`: RisingWave sizes its streaming thread pools from
-//! the core count it detects, so a container restricted to 62 cores would still spawn workers for
-//! all 64 and thrash the two the bench is using. `streaming_parallelism` must match the cpuset.
+//! Two cores are reserved for the bench process, the rest go to the container.
+//!
+//! `parallelism` (recorded on [`Layout`] and shown in `why`) is informational, not applied by SQL.
+//! Verified on the Linux rig (see `pinning-fix-report.md`): a container started with
+//! `--cpuset-cpus 0-61` reports `nproc` = 62 and `cpuset.cpus.effective` = `0-61` inside, and a
+//! materialized view created in that container with `streaming_parallelism` left at its default
+//! comes up with fragment parallelism 62 — RisingWave sizes its default ("adaptive") streaming
+//! parallelism from the cgroup-visible core count, not the host's. `show streaming_parallelism`
+//! still prints `default` in that session; that is the *config knob* reading its own default, not
+//! a sign the cluster is unsized — the resolved per-fragment parallelism is what matters, and it
+//! already matches the cpuset. An earlier version of this doc claimed an explicit
+//! `ALTER SYSTEM SET streaming_parallelism` was "the part that actually buys the isolation"; that
+//! was wrong and has been removed — the container cpuset alone is sufficient, so this crate does
+//! not issue that statement.
 //!
 //! Pinning is opt-in (`--pin`). Every number recorded in the README so far was measured unpinned,
 //! so switching the default would silently change what those numbers mean.
 //!
-//! Platform split: on Linux the container gets `--cpuset-cpus` and this process gets
-//! `sched_setaffinity`. macOS has no equivalent — its affinity API exposes only scheduler *hints*
-//! (affinity tags), which cannot restrict a process to a core set — so `apply_to_self` is a no-op
-//! there and `why` records it.
+//! Platform split: on Linux the container gets `--cpuset-cpus` and every thread of this process
+//! (not just the one that calls `main`) gets `sched_setaffinity` — see `pin_current_thread` and
+//! `main.rs`'s `on_thread_start` hook, since `sched_setaffinity` only affects the calling thread
+//! and `tokio`'s worker threads are created after `main` starts. macOS has no equivalent — its
+//! affinity API exposes only scheduler *hints* (affinity tags), which cannot restrict a thread to
+//! a core set — so `pin_current_thread` is a no-op there and `platform_note` records it.
 
 /// The layout to apply: cpuset strings for the container and this process, the matching
 /// `streaming_parallelism`, and a human-readable account of how it was chosen (rendered in the
@@ -47,8 +59,9 @@ pub fn plan(total: usize) -> Layout {
         bench: Some(format!("{}-{}", cluster_cores, total - 1)),
         parallelism: Some(cluster_cores as u32),
         why: format!(
-            "{total} cores: cluster 0-{}, bench {}-{}, streaming_parallelism {} (matched to the \
-             cluster cpuset so RisingWave does not size its pools for cores it cannot use)",
+            "{total} cores: cluster 0-{}, bench {}-{}, streaming_parallelism {} expected (the \
+             container's --cpuset-cpus alone makes RisingWave's default parallelism policy size \
+             new MVs to this count — verified, no ALTER SYSTEM needed; see pin.rs doc)",
             cluster_cores - 1,
             cluster_cores,
             total - 1,
@@ -85,19 +98,20 @@ fn cgroup_quota_cores() -> Option<usize> {
     Some(((quota / period).floor() as usize).max(1))
 }
 
-/// Restrict this process to `layout.bench`. Linux only; a no-op elsewhere so the crate builds and
-/// runs everywhere (the caller reports `layout.why`, which says as much).
+/// Pin the CALLING thread to `cores`. Linux only; a no-op elsewhere so the crate builds and runs
+/// everywhere (the caller reports [`platform_note`], which says as much).
+///
+/// `sched_setaffinity(2)` affects only the thread that calls it, not the whole process — there is
+/// no "pin the process" syscall. A `tokio` runtime spawns its worker and blocking-pool threads
+/// after `main` starts, so getting every one of them pinned means calling this from each thread as
+/// it starts (`Builder::on_thread_start`), not once from `main`. See `main.rs`.
 #[cfg(target_os = "linux")]
-pub fn apply_to_self(layout: &Layout) -> anyhow::Result<()> {
-    let Some(spec) = layout.bench.as_deref() else {
-        return Ok(());
-    };
-    let cores = parse_range(spec)?;
+pub fn pin_current_thread(cores: &[usize]) -> anyhow::Result<()> {
     // `sched_setaffinity(0, ...)` via libc-free syscall: build the mask by hand rather than take a
     // dependency for one call. Mask is a bitset of u64 words, LSB = core 0.
     const WORDS: usize = 16; // 1024 cores, comfortably beyond anything this bench runs on
     let mut mask = [0u64; WORDS];
-    for c in cores {
+    for &c in cores {
         let (w, b) = (c / 64, c % 64);
         if w >= WORDS {
             anyhow::bail!("core {c} beyond the supported affinity mask width");
@@ -105,7 +119,9 @@ pub fn apply_to_self(layout: &Layout) -> anyhow::Result<()> {
         mask[w] |= 1u64 << b;
     }
     // SAFETY: `mask` is a valid, initialized buffer of exactly the length passed; pid 0 means
-    // "this thread group". The kernel only reads from the pointer.
+    // "the calling thread" for `sched_setaffinity`'s `pid` argument (it is a thread ID, not a
+    // process ID, despite the name — see sched_setaffinity(2), "pid" vs "tid"). The kernel only
+    // reads from the pointer.
     let rc = unsafe {
         libc::syscall(
             libc::SYS_sched_setaffinity,
@@ -124,10 +140,21 @@ pub fn apply_to_self(layout: &Layout) -> anyhow::Result<()> {
 }
 
 /// Non-Linux: nothing to do. macOS exposes affinity *tags* (scheduler hints), not a cpuset, so
-/// there is no honest way to restrict this process — the container's cpuset still applies.
+/// there is no honest way to restrict a thread — the container's cpuset still applies.
 #[cfg(not(target_os = "linux"))]
-pub fn apply_to_self(_layout: &Layout) -> anyhow::Result<()> {
+pub fn pin_current_thread(_cores: &[usize]) -> anyhow::Result<()> {
     Ok(())
+}
+
+/// Pin the CALLING thread to `layout.bench`. A thin wrapper over [`pin_current_thread`] for call
+/// sites that already have a `Layout` in hand and don't want to parse `bench` themselves. Does
+/// nothing if `layout.bench` is unset (the "too few cores to partition" case).
+pub fn apply_to_self(layout: &Layout) -> anyhow::Result<()> {
+    let Some(spec) = layout.bench.as_deref() else {
+        return Ok(());
+    };
+    let cores = parse_range(spec)?;
+    pin_current_thread(&cores)
 }
 
 /// `"6-7"` / `"3"` / `"0-2,7"` -> the core numbers. Rejects anything else rather than silently

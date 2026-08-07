@@ -46,8 +46,11 @@ struct Cli {
     cores_bench: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Not `#[tokio::main]`: when pinning is active the runtime needs an `on_thread_start` hook so
+/// every worker and blocking-pool thread pins itself to the bench cores as it starts (see
+/// `build_runtime` and `pin.rs`'s module doc — `sched_setaffinity` is per-thread, not
+/// per-process, and `#[tokio::main]`'s generated runtime offers no way to install the hook).
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if !cli.bind.ip().is_loopback() {
@@ -63,15 +66,55 @@ async fn main() -> anyhow::Result<()> {
         println!("bench-web: {}", l.why);
     }
 
-    bench_web::serve(ServeConfig {
+    let rt = build_runtime(pin_layout.as_ref())?;
+    // `on_thread_start` only fires for threads the runtime spawns — it does not retroactively pin
+    // the thread that built the runtime and is about to call `block_on` (which, in a multi-thread
+    // runtime, also participates in polling). Pin it here so every thread ends up pinned, not just
+    // the workers.
+    if let Some(layout) = &pin_layout {
+        bench_web::pin::apply_to_self(layout)?;
+    }
+    rt.block_on(bench_web::serve(ServeConfig {
         bind: cli.bind,
         db_url: cli.url,
         container_name: cli.container_name,
         image: cli.image,
         pin_layout,
         pipeline_sql: cli.pipeline_sql,
-    })
-    .await
+    }))
+}
+
+/// Builds the tokio runtime `main` drives. With no pin layout (the default) this matches what
+/// `#[tokio::main]` used to generate: a multi-thread runtime, default worker count, all drivers
+/// enabled. With a pin layout active, the worker pool is sized to the bench cpuset — not left at
+/// the default (one worker per host core), which on a 64-core box confined to 2 cores would be 64
+/// workers oversubscribing 2 — and every worker/blocking-pool thread pins itself to those cores
+/// via `on_thread_start` as it starts, since `sched_setaffinity` only affects the calling thread.
+fn build_runtime(pin_layout: Option<&bench_web::pin::Layout>) -> anyhow::Result<tokio::runtime::Runtime> {
+    use bench_web::pin;
+
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+
+    if let Some(layout) = pin_layout {
+        if let Some(spec) = &layout.bench {
+            let cores = pin::parse_range(spec)?;
+            let worker_count = cores.len().max(1);
+            builder.worker_threads(worker_count);
+            let hook_cores = cores.clone();
+            builder.on_thread_start(move || {
+                if let Err(e) = pin::pin_current_thread(&hook_cores) {
+                    // A thread that fails to pin still runs — just unpinned — so this cannot be a
+                    // panic (that would take the whole runtime down over one thread). It is loud
+                    // on stderr because a silently-unpinned thread is exactly the bug this file
+                    // exists to prevent.
+                    eprintln!("bench-web: WARNING failed to pin runtime thread: {e}");
+                }
+            });
+        }
+    }
+
+    Ok(builder.build()?)
 }
 
 /// `--cores-*` overrides imply `--pin`; the automatic layout comes from the usable core count.
