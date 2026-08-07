@@ -10,6 +10,14 @@ scenario scripts, adversarial patterns, and performance probes run against publi
 `make info` prints a getting-started walkthrough — the three paths (demo it, check a build, measure
 it) and what to do when something looks wrong. `make help` lists every target.
 
+`make doctor` checks the four prerequisites — podman, Rust (against the version `web/Cargo.toml`
+itself declares), `psql` and `python3` — and reports all of them rather than stopping at the first.
+Every target that needs a tool depends on its check, so a missing one produces install instructions
+for the package manager on that machine (brew, dnf, pacman, apt, zypper, apk) instead of
+`podman: command not found`. On macOS it also covers the two traps worth knowing about: podman needs
+a VM (`podman machine init && podman machine start`), and Homebrew keeps `libpq` keg-only so `psql`
+never lands on `PATH`.
+
 ```sh
 make up                # start a single-node RisingWave from $RW_IMAGE (podman run)
 make psql              # interactive session on :4566

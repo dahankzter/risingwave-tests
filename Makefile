@@ -14,12 +14,17 @@ PSQLFLAGS = -h 127.0.0.1 -p 4566 -d dev -U root -v ON_ERROR_STOP=1
 # lookup even for public registries; a bench-local empty auth file sidesteps it.
 export REGISTRY_AUTH_FILE := $(CURDIR)/.auth.json
 
-.PHONY: help info up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load bench latency lat-report latency-model console metrics test
+.PHONY: help info doctor check-podman check-rust check-psql check-python
+.PHONY: up down clean psql run smoke bless wait logs load-setup load rt-setup rt-load
+.PHONY: bench latency lat-report latency-model console metrics test
 
 # Default target is deliberately inert: a bare `make` should not recreate a running cluster.
 .DEFAULT_GOAL := help
 help:
-	@echo "usage: make <target>      (new here? run: make info)"
+	@echo "usage: make <target>      (new here? run: make info; setup trouble? make doctor)"
+	@echo
+	@echo "  # setup"
+	@echo "  doctor                   check podman, rust, psql and python3, with install hints"
 	@echo
 	@echo "  # cluster"
 	@echo "  up                       start the pinned image (recreates any leftover container)"
@@ -60,11 +65,13 @@ info:
 	@echo "It runs a published image in podman and drives SQL against it. Nothing here"
 	@echo "needs a RisingWave source tree."
 	@echo
-	@echo "Prerequisites"
+	@echo "Prerequisites  ->  run 'make doctor' to check all four at once, with the"
+	@echo "                   install command for this machine's package manager"
 	@echo "  podman        (this bench does not use docker)"
-	@echo "  Rust >= 1.95  for the workload generator and the console"
+	@echo "  Rust >= $(RUST_MIN)  for the workload generator and the console"
 	@echo "  psql          on a Mac with keg-only libpq:"
 	@echo "                  export PSQL=/opt/homebrew/opt/libpq/bin/psql"
+	@echo "  python3       for 'make latency-model' only"
 	@echo
 	@echo "1. Demo it (the console drives the cluster itself — no 'make up' first)"
 	@echo "     make console"
@@ -95,12 +102,197 @@ info:
 	@echo
 	@echo "  make help        the full target list"
 
+# ---- Prerequisites -------------------------------------------------------------------------------
+# A missing tool should print a command that works on the machine reading the message, so the
+# package manager is detected rather than listed. `make doctor` runs every check at once.
+#
+# Detection happens at parse time into single-line variables on purpose: a multi-line `define`
+# expanded inside a recipe is one of make's better traps, and this needs to be the code that works
+# when nothing else does.
+
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Darwin)
+  PM := brew
+else
+  # First manager found wins; covers the mainstream distros without pretending to cover all of them.
+  PM := $(shell for m in dnf pacman apt-get zypper apk; do \
+          command -v $$m >/dev/null 2>&1 && echo $$m && break; done)
+endif
+
+PM_CMD_brew    := brew install
+PM_CMD_dnf     := sudo dnf install
+PM_CMD_pacman  := sudo pacman -S
+PM_CMD_apt-get := sudo apt install
+PM_CMD_zypper  := sudo zypper install
+PM_CMD_apk     := sudo apk add
+PM_CMD         := $(PM_CMD_$(PM))
+
+# Package names differ enough between managers to be worth spelling out rather than guessing.
+PKG_PODMAN_brew    := podman
+PKG_PODMAN_dnf     := podman
+PKG_PODMAN_pacman  := podman
+PKG_PODMAN_apt-get := podman
+PKG_PODMAN_zypper  := podman
+PKG_PODMAN_apk     := podman
+PKG_PODMAN         := $(PKG_PODMAN_$(PM))
+
+PKG_PY_brew    := python
+PKG_PY_dnf     := python3
+PKG_PY_pacman  := python
+PKG_PY_apt-get := python3
+PKG_PY_zypper  := python3
+PKG_PY_apk     := python3
+PKG_PY         := $(PKG_PY_$(PM))
+
+# psql comes from the client package, not the server. Homebrew's libpq is keg-only, which is why
+# PSQL exists as a variable at the top of this file.
+PKG_PSQL_brew    := libpq
+PKG_PSQL_dnf     := postgresql
+PKG_PSQL_pacman  := postgresql-libs
+PKG_PSQL_apt-get := postgresql-client
+PKG_PSQL_zypper  := postgresql
+PKG_PSQL_apk     := postgresql-client
+PKG_PSQL         := $(PKG_PSQL_$(PM))
+
+# The minimum toolchain is read from the workspace rather than duplicated, so bumping
+# web/Cargo.toml's rust-version cannot leave this check behind vouching for an older one.
+RUST_MIN := $(shell sed -n 's/^rust-version = "\([0-9.]*\)".*/\1/p' web/Cargo.toml)
+
+# Printed when the manager is unknown, or as the "other distros" footnote.
+define OTHER_DISTROS
+	echo "    Fedora/RHEL:    sudo dnf install $(1)"; \
+	echo "    Arch:           sudo pacman -S $(2)"; \
+	echo "    Debian/Ubuntu:  sudo apt install $(3)"; \
+	echo "    openSUSE:       sudo zypper install $(4)";
+endef
+
+check-podman:
+	@command -v podman >/dev/null 2>&1 || { \
+		echo "" >&2; \
+		echo "podman is not installed." >&2; \
+		echo "This bench is podman-only: it runs one container directly, with no compose and no" >&2; \
+		echo "docker. Install it:" >&2; \
+		echo "" >&2; \
+		if [ -n "$(PM_CMD)" ]; then echo "    $(PM_CMD) $(PKG_PODMAN)" >&2; else \
+			$(call OTHER_DISTROS,podman,podman,podman,podman) >&2; fi; \
+		if [ "$(UNAME_S)" = "Darwin" ]; then \
+			echo "" >&2; \
+			echo "Then start its VM — on macOS podman needs one, and every command fails" >&2; \
+			echo "confusingly until it is running:" >&2; \
+			echo "" >&2; \
+			echo "    podman machine init" >&2; \
+			echo "    podman machine start" >&2; \
+		fi; \
+		echo "" >&2; \
+		exit 1; \
+	}
+	@podman info >/dev/null 2>&1 || { \
+		echo "" >&2; \
+		echo "podman is installed but not responding." >&2; \
+		if [ "$(UNAME_S)" = "Darwin" ]; then \
+			echo "On macOS this almost always means its VM is not running:" >&2; \
+			echo "" >&2; \
+			echo "    podman machine start        # or: podman machine init, the first time" >&2; \
+		else \
+			echo "Check the service and your permissions:" >&2; \
+			echo "" >&2; \
+			echo "    systemctl --user start podman.socket" >&2; \
+			echo "    podman info                 # for the underlying error" >&2; \
+		fi; \
+		echo "" >&2; \
+		exit 1; \
+	}
+
+check-rust:
+	@command -v cargo >/dev/null 2>&1 || { \
+		echo "" >&2; \
+		echo "cargo is not installed; the bench tools and the web console are Rust." >&2; \
+		echo "" >&2; \
+		echo "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2; \
+		echo "" >&2; \
+		echo "rustup rather than a distro package deliberately: this workspace requires Rust" >&2; \
+		echo "$(RUST_MIN) or newer, and distro toolchains are often older." >&2; \
+		echo "" >&2; \
+		exit 1; \
+	}
+	@have=$$(cargo --version 2>/dev/null | awk '{print $$2}'); \
+	oldest=$$(printf '%s\n%s\n' "$(RUST_MIN)" "$$have" | sort -V | head -1); \
+	if [ "$$oldest" != "$(RUST_MIN)" ]; then \
+		echo "" >&2; \
+		echo "cargo $$have is too old: this workspace requires $(RUST_MIN) or newer" >&2; \
+		echo "(web/Cargo.toml sets rust-version, and this check reads it from there)." >&2; \
+		echo "" >&2; \
+		if command -v rustup >/dev/null 2>&1; then \
+			echo "    rustup update stable" >&2; \
+		else \
+			echo "    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2; \
+			echo "" >&2; \
+			echo "That cargo came from somewhere other than rustup; installing rustup gives you" >&2; \
+			echo "a toolchain you can keep current." >&2; \
+		fi; \
+		echo "" >&2; \
+		exit 1; \
+	fi
+
+check-psql:
+	@command -v $(PSQL) >/dev/null 2>&1 || { \
+		echo "" >&2; \
+		echo "psql not found (looked for: $(PSQL))." >&2; \
+		echo "" >&2; \
+		if [ -n "$(PM_CMD)" ]; then echo "    $(PM_CMD) $(PKG_PSQL)" >&2; else \
+			$(call OTHER_DISTROS,postgresql,postgresql-libs,postgresql-client,postgresql) >&2; fi; \
+		if [ "$(UNAME_S)" = "Darwin" ]; then \
+			echo "" >&2; \
+			echo "Homebrew keeps libpq keg-only, so installing it does not put psql on PATH." >&2; \
+			echo "Point this bench at it instead:" >&2; \
+			echo "" >&2; \
+			echo "    export PSQL=/opt/homebrew/opt/libpq/bin/psql" >&2; \
+		fi; \
+		echo "" >&2; \
+		exit 1; \
+	}
+
+check-python:
+	@command -v python3 >/dev/null 2>&1 || { \
+		echo "" >&2; \
+		echo "python3 not found; the latency-model harness is a stdlib-only python script." >&2; \
+		echo "" >&2; \
+		if [ -n "$(PM_CMD)" ]; then echo "    $(PM_CMD) $(PKG_PY)" >&2; else \
+			$(call OTHER_DISTROS,python3,python,python3,python3) >&2; fi; \
+		echo "" >&2; \
+		exit 1; \
+	}
+
+# Every check at once, reporting all findings rather than stopping at the first — someone setting a
+# machine up wants the whole list, not one item per attempt.
+doctor:
+	@echo "platform:         $(UNAME_S)"
+	@echo "package manager:  $(if $(PM),$(PM),none recognised)"
+	@echo "required rust:    $(RUST_MIN) or newer"
+	@echo
+	@fail=0; \
+	for c in podman rust psql python; do \
+		if $(MAKE) --no-print-directory check-$$c >/dev/null 2>&1; then \
+			printf '  ok    %s\n' "$$c"; \
+		else \
+			printf '  MISSING %s\n' "$$c"; fail=1; \
+		fi; \
+	done; \
+	echo; \
+	if [ $$fail -eq 0 ]; then \
+		echo "all prerequisites present — run: make info"; \
+	else \
+		echo "for the fix, run the individual check, e.g.:  make check-podman"; \
+		exit 1; \
+	fi
+
 # The published images are linux/amd64 only; on Apple Silicon podman runs them emulated —
 # fine for smoke and semantics runs, meaningless for performance numbers (use the rig).
 # --replace so `make up` is idempotent: it recreates the container over a leftover one (stopped,
 # or started earlier by compose) instead of failing with "name is already in use". The data volume
 # is untouched, so this costs nothing but a restart -- use `make clean` to actually drop state.
-up:
+up: check-podman
 	podman run -d --replace --name $(NAME) --platform linux/amd64 \
 		-p 4566:4566 -p 5690:5690 -p 1260:1260 \
 		-v rw-tests-data:/root/.risingwave \
@@ -110,7 +302,7 @@ up:
 # Bounded: a container that dies during startup (the classic case is barrier recovery aborting on
 # state left by an incompatible tag — see the README) must fail the target, not hang forever.
 WAIT_SECS ?= 180
-wait:
+wait: check-podman check-psql
 	@echo "waiting for pgwire on :4566 (up to $(WAIT_SECS)s) ..."
 	@i=0; until $(PSQL) $(PSQLFLAGS) -c "select 1" >/dev/null 2>&1; do \
 		i=$$((i + 1)); \
@@ -128,31 +320,31 @@ wait:
 	done
 	@echo "ready"
 
-down:
+down: check-podman
 	podman rm -f $(NAME) 2>/dev/null || true
 
-clean: down
+clean: check-podman down
 	podman volume rm rw-tests-data 2>/dev/null || true
 
-logs:
+logs: check-podman
 	podman logs -f $(NAME)
 
-psql:
+psql: check-psql
 	$(PSQL) $(PSQLFLAGS)
 
 # make run S=scenarios/semantics/preference_supersession.sql
-run:
+run: check-psql
 	$(PSQL) $(PSQLFLAGS) -e -f $(S)
 
 # smoke asserts against recorded output in expected/ — semantics AND adversarial, since the
 # backtracking probe is deterministic and self-contained. Without the recorded files a scenario
 # only fails on a SQL error, and a silently wrong result set passes.
-smoke:
+smoke: check-psql
 	@PSQL=$(PSQL) scenarios/check.sh
 
 # Re-record expected/*.out. Review the resulting diff against the expectations written in each
 # script's comments before committing.
-bless:
+bless: check-psql
 	@PSQL=$(PSQL) scenarios/check.sh --bless
 
 # ---- Load & latency (real numbers belong on the rig; emulated runs are shape-checks only) ----
@@ -162,7 +354,7 @@ PROFILE ?= small
 ROWS    ?=
 BENCH    = web/target/release/bench
 
-$(BENCH):
+$(BENCH): check-rust
 	cd web && cargo build --release
 
 ifeq ($(PROFILE),small)
@@ -173,7 +365,7 @@ else ifeq ($(PROFILE),hotspot)
 GENARGS = --table t_perf --partitions 1000 --rows $(or $(ROWS),500000) --hot-count 1 --hot-share 0.9 --abandon-prob 0.3
 endif
 
-load-setup:
+load-setup: check-psql
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_bulk.sql
 
 # Feed, then seal. The seal is a separate step because a far-future sentinel delivered while the
@@ -182,7 +374,7 @@ load: $(BENCH)
 	$(BENCH) load $(GENARGS)
 	@$(BENCH) seal --table t_perf --mv mv_perf
 
-rt-setup:
+rt-setup: check-psql
 	$(PSQL) $(PSQLFLAGS) -f scenarios/perf/setup_realtime.sql
 
 rt-load: $(BENCH)
@@ -191,23 +383,23 @@ rt-load: $(BENCH)
 
 # One command for the whole realtime benchmark: build the pipeline, run traffic, take both
 # measurements, print them together. Everything below is the same run done by hand.
-bench:
+bench: check-psql
 	@PSQL=$(PSQL) $(if $(ROWS),ROWS=$(ROWS)) $(if $(RATE),RATE=$(RATE)) $(if $(ROUNDS),ROUNDS=$(ROUNDS)) ./latency/bench.sh
 
 # [1] client-side: insert, then poll mv_rt until the match appears.
-latency:
+latency: check-psql
 	PSQL=$(PSQL) ROUNDS=$(or $(ROUNDS),10) ./latency/probe.sh
 
 # The two clocks that decide when a result becomes visible: barrier-gated vs watermark-gated, plus
 # the starvation case where a quiet stream stops emitting entirely. Produces the table in
 # docs/latency-model.md. Needs the console running (`make console`) and nothing else installed.
-latency-model:
+latency-model: check-python
 	python3 scenarios/perf/latency_model.py \
 	  --console http://127.0.0.1:$(or $(PORT),3000) \
 	  --repeat $(or $(REPEAT),5)
 
 # [2] server-side: the proctime stamps every match recorded for itself, over the whole load.
-lat-report:
+lat-report: check-psql
 	@$(PSQL) $(PSQLFLAGS) -f latency/report.sql
 
 # ---- Console ---------------------------------------------------------------------------------
@@ -216,7 +408,7 @@ lat-report:
 # README's pinning section for what that does and does not buy on each platform.
 CONSOLE = web/target/release/bench-web
 
-$(CONSOLE):
+$(CONSOLE): check-rust
 	cd web && cargo build --release
 
 console: $(CONSOLE)
@@ -229,5 +421,5 @@ metrics:
 	@curl -fsS localhost:1260/metrics | grep '^stream_match_recognize' \
 		|| echo "no metrics on :1260 (is the cluster up, and is the port published?)"
 
-test:
+test: check-rust
 	cd web && cargo test --workspace
