@@ -57,7 +57,15 @@ make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-m
 
 Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--mr--<sha>--<branch>`:
 
-- `…--mr--bee0fbd--feat-match-recognize-v2` — current PR head: all six review rounds (incl. the
+- `…--mr--0897a4d--feat-match-recognize-v2` — **current PR head**, and what the Makefile and
+  `compose.yaml` pin. Adds, over `bee0fbd`: a starved visit is allowed to emit and a held match's
+  rows are never pruned; the scan cursor no longer advances past a budget-aborted start; the
+  whole-pattern NFA state cap is re-checked on decode; a `WITHIN` bound that widens the `ORDER BY`
+  type is rejected at bind time; and CI runs the recovery suite. The branch was rebased, so this is
+  not a descendant of `bee0fbd`.
+  Verified on the Linux rig: `make smoke` 5/5 against the recorded `expected/` with no re-blessing,
+  so none of the above changed the semantics this bench asserts.
+- `…--mr--bee0fbd--feat-match-recognize-v2` — the previous head: all six review rounds (incl. the
   budget-truncation and calendar-interval WITHIN fixes, the `_match_id` epoch floor, and the
   allocation/hot-path perf batch). Proto wire format changed vs older tags — do not mix a frontend
   and compute node from different tags.
@@ -207,13 +215,19 @@ make bench                                       # whole realtime latency benchm
 make bench ROUNDS=20 RATE=5000                   # ... with more probe rounds and heavier traffic
 ```
 
-Measured on the Linux rig (native amd64, 64 cores) against `bee0fbd`:
+Measured on the Linux rig (native amd64, 64 cores, unpinned) against `0897a4d`:
 
 | | |
 |---|---|
-| bulk ingest, fraud profile | ~92k rows/s (200k rows, 100k partitions, 100 hot @ 30%, 25% abandoned) |
-| decision latency [1] client probe | p50 6318 ms, p95 6462 ms, min 5996 ms (8 rounds @ 2k rows/s) |
-| decision latency [2] server-side | p50 6048 ms, p95 6413 ms, min 5104 ms (39801 matches @ 2k rows/s) |
+| bulk ingest, fraud profile | ~81k rows/s (200k rows, 100k partitions, 100 hot @ 30%, 25% abandoned) — the feed alone; `make load` also seals, which polls until the match count stops moving and takes an order of magnitude longer than the feed |
+| decision latency [1] client probe | p50 6398 ms, p95 6411 ms, min 6014 ms (8 rounds @ 2k rows/s) |
+| decision latency [2] server-side | p50 6248 ms, p95 6252 ms, min 5499 ms (39839 matches @ 2k rows/s) |
+
+The same workload on `bee0fbd` gave ~92k rows/s and p50s of 6318/6048 ms. Do not read the ingest
+difference as a regression: 92k was a single timing of a 2.5-second feed, which is short enough
+that container and connection warm-up move it several percent, and neither figure was taken with
+pinning. The latency figures are within a couple of hundred milliseconds and dominated by the 5s
+declared watermark delay either way.
 
 There are two latency measurements because they answer different questions. `make latency` runs a
 client probe: insert a chain's completing event, poll the MV until the match shows up. That is

@@ -1,7 +1,7 @@
 # Test bench for risingwave-mr images. Podman-only (this machine has no docker); a single
 # container needs no compose.
 
-RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2
+RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--0897a4d--feat-match-recognize-v2
 NAME     ?= rw-tests
 # Whatever is on PATH. A Mac with keg-only Homebrew libpq does not put psql on PATH, so set it
 # in the environment there:  export PSQL=/opt/homebrew/opt/libpq/bin/psql

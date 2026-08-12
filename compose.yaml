@@ -17,7 +17,7 @@
 
 services:
   risingwave:
-    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2}
+    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--0897a4d--feat-match-recognize-v2}
     container_name: rw-tests
     # See the Makefile: the metrics endpoint binds loopback inside the container unless told
     # otherwise, which makes the published port unreachable.

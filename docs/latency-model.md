@@ -25,16 +25,23 @@ node means the second clock applies.
 
 | | case | result |
 |---|---|---|
-| A | barrier-gated: a plain aggregate MV | **1.07s** (1.06–1.10) |
-| B | watermark-gated, event time already well in the past | **3.02s** (2.97–3.04) |
+| A | barrier-gated: a plain aggregate MV | **0.84s** (0.84–0.85) |
+| B | watermark-gated, event time already well in the past | **2.86s** (2.84–2.95) |
 | C | watermark-gated, live data, nothing later arriving | **never** (5/5 runs) |
-| C' | the same, once one later event arrives | **2.0–7.1s**, bimodal |
+| C' | the same, once one later event arrives | **5.89s** (5.80–6.05) |
 
-`barrier_interval_ms=1000`, `checkpoint_frequency=1`, five runs per case.
+`barrier_interval_ms=1000`, `checkpoint_frequency=1`, five runs per case. Measured natively on the
+Linux rig (64-core x86_64, unpinned) against image `…--mr--0897a4d--…`.
 
-> **These absolute numbers are from a single-node linux/amd64 container emulated on Apple Silicon
-> and are inflated.** Trust the structure and the ratios; re-run the script on native hardware for
-> figures worth quoting. The console's details tab labels its own environment for the same reason.
+> Earlier revisions of this table were taken on a linux/amd64 container emulated on Apple Silicon
+> and were inflated — A 1.07s, B 3.02s. The structure and the ratios held; only the absolute
+> figures moved. The console's details tab labels its own environment for the same reason, and a
+> Mac run should still be read as a shape check rather than a measurement.
+
+On C': the emulated run saw it as bimodal (≈2s or ≈6–7s, depending on where the releasing event
+landed in the barrier cycle). Natively, five runs all landed in 5.80–6.05s. Five samples cannot
+establish that the lower mode is gone — the script still reports raw values alongside the median
+precisely so a reader can see the spread rather than trust a single number.
 
 Reading them:
 
@@ -106,7 +113,7 @@ full and the second-level view still empty.
 ## The dials, in order of leverage
 
 1. **Watermark tolerance in the table's DDL.** Dominates everything else. At 5s tolerance the
-   realtime pipeline measures p50 ≈ 5.75s end to end — roughly 750ms of engine work under 5s of
+   realtime pipeline measures p50 ≈ 6.25s end to end — roughly 1.25s of engine work under 5s of
    declared policy. The console's lateness selector exists to make this a demo rather than a claim,
    and it forces a pipeline rebuild because the number lives in the DDL.
 2. **Whether the query needs watermark gating at all.** A plain aggregate is one barrier. Reach for
