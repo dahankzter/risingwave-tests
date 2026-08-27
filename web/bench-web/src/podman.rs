@@ -21,10 +21,10 @@ use tokio::process::Command;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// The Makefile's pinned default — see `RW_IMAGE ?=` at the top of `/Makefile`. Kept in sync by
-/// hand; there is no single source of truth shared between `make` and this binary.
-pub const DEFAULT_IMAGE: &str =
-    "ghcr.io/dahankzter/risingwave:v3.2.0-alpha--mr--4afdc2a--feat-match-recognize-v2";
+/// The Makefile's default — see `RW_IMAGE ?=` at the top of `/Makefile`. Kept in sync by hand;
+/// there is no single source of truth shared between `make` and this binary. A moving tag, which
+/// is why `up` passes `--pull=newer`.
+pub const DEFAULT_IMAGE: &str = "ghcr.io/dahankzter/risingwave:latest";
 pub const DEFAULT_NAME: &str = "rw-tests";
 pub const DATA_VOLUME: &str = "rw-tests-data";
 
@@ -111,6 +111,9 @@ impl Cluster for PodmanDriver {
                 "run".into(),
                 "-d".into(),
                 "--replace".into(),
+                // The default image is a moving tag; without this podman keeps running the copy
+                // already in local storage and never sees a newer publish.
+                "--pull=newer".into(),
                 "--name".into(),
                 self.name.clone(),
                 "--platform".into(),

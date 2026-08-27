@@ -46,8 +46,9 @@ The two are interchangeable: same container name, same volume, same pinned image
 `make smoke`, `make logs`, `make down` and `make clean` all work against a compose-started
 cluster. Keep `RW_IMAGE` in step between the two files when repinning.
 
-The image is pinned in the `RW_IMAGE` variable in the Makefile; override per
-invocation to compare versions:
+The image comes from the `RW_IMAGE` variable in the Makefile, defaulting to the moving `latest`
+tag. Override it per invocation to run a specific build — an older head, the other branch's
+architecture, or the exact tag a number was measured against:
 
 ```sh
 make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-match-recognize-parser
@@ -55,10 +56,29 @@ make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-m
 
 ## Images
 
-Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--mr--<sha>--<branch>`:
+Published at `ghcr.io/dahankzter/risingwave`. Two moving tags point at head builds, and every
+build also keeps an immutable tag encoding `<rw-version>--mr--<sha>--<branch>`.
 
-- `…--mr--4afdc2a--feat-match-recognize-v2` — **current PR head**, and what the Makefile and
-  `compose.yaml` pin. Note the version prefix is `v3.2.0-alpha`, not `v3.1.0-alpha`: the branch was
+Moving:
+
+- `latest` — the most recently published build, whichever branch it came from. What the Makefile,
+  `compose.yaml` and the console default to.
+- `mr-v2` — the head of `feat-match-recognize-v2` specifically, so the older parser-branch
+  architecture can get its own pointer later without fighting over `latest`.
+
+A moving tag is not enough on its own: `podman run` uses whatever copy is already in local storage
+and never re-checks the registry, so a stale `latest` runs silently. Everything here that starts a
+container passes `--pull=newer` (`pull_policy: always` in `compose.yaml`) to close that. If you
+start one by hand, `podman pull` first.
+
+**Pin a sha tag for anything you intend to compare or reproduce.** `expected/` and the recorded
+latency numbers belong to a specific build; asserting them against `latest` means a failure no
+longer names the build that broke.
+
+Immutable:
+
+- `…--mr--4afdc2a--feat-match-recognize-v2` — **current PR head**, and what `latest` and `mr-v2`
+  currently point at. Note the version prefix is `v3.2.0-alpha`, not `v3.1.0-alpha`: the branch was
   rebased onto a main that bumped the workspace version. Adds, over `0897a4d`: the NFA walk is
   iterative and remembers verdicts, so a long match converges instead of re-deriving; an overflowed
   `WITHIN` deadline reads as a window that never closes; the MATCH_RECOGNIZE grammar words are

@@ -17,7 +17,10 @@
 
 services:
   risingwave:
-    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:v3.2.0-alpha--mr--4afdc2a--feat-match-recognize-v2}
+    image: ${RW_IMAGE:-ghcr.io/dahankzter/risingwave:latest}
+    # `latest` is a moving tag, so a cached copy is not good enough -- mirrors the Makefile's
+    # --pull=newer. Override RW_IMAGE with a sha tag to pin a run.
+    pull_policy: always
     container_name: rw-tests
     # See the Makefile: the metrics endpoint binds loopback inside the container unless told
     # otherwise, which makes the published port unreachable.

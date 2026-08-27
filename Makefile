@@ -1,7 +1,12 @@
 # Test bench for risingwave-mr images. Podman-only (this machine has no docker); a single
 # container needs no compose.
 
-RW_IMAGE ?= ghcr.io/dahankzter/risingwave:v3.2.0-alpha--mr--4afdc2a--feat-match-recognize-v2
+# A moving tag: it is repointed at the head build after every publish. `up` therefore passes
+# --pull=newer, without which podman would keep running whatever copy of `latest` is already in
+# local storage and never notice a newer one. To reproduce a specific run, override with the
+# immutable sha tag it was measured against:
+#   make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.2.0-alpha--mr--4afdc2a--feat-match-recognize-v2
+RW_IMAGE ?= ghcr.io/dahankzter/risingwave:latest
 NAME     ?= rw-tests
 # Whatever is on PATH. A Mac with keg-only Homebrew libpq does not put psql on PATH, so set it
 # in the environment there:  export PSQL=/opt/homebrew/opt/libpq/bin/psql
@@ -293,7 +298,7 @@ doctor:
 # or started earlier by compose) instead of failing with "name is already in use". The data volume
 # is untouched, so this costs nothing but a restart -- use `make clean` to actually drop state.
 up: check-podman
-	podman run -d --replace --name $(NAME) --platform linux/amd64 \
+	podman run -d --replace --pull=newer --name $(NAME) --platform linux/amd64 \
 		-p 4566:4566 -p 5690:5690 -p 1260:1260 \
 		-v rw-tests-data:/root/.risingwave \
 		$(RW_IMAGE) single_node --prometheus-listener-addr 0.0.0.0:1260
