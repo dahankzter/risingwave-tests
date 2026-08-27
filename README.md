@@ -57,15 +57,25 @@ make up RW_IMAGE=ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--231d979--feat-m
 
 Published at `ghcr.io/dahankzter/risingwave` with tags encoding `<rw-version>--mr--<sha>--<branch>`:
 
-- `…--mr--0897a4d--feat-match-recognize-v2` — **current PR head**, and what the Makefile and
-  `compose.yaml` pin. Adds, over `bee0fbd`: a starved visit is allowed to emit and a held match's
-  rows are never pruned; the scan cursor no longer advances past a budget-aborted start; the
-  whole-pattern NFA state cap is re-checked on decode; a `WITHIN` bound that widens the `ORDER BY`
+- `…--mr--4afdc2a--feat-match-recognize-v2` — **current PR head**, and what the Makefile and
+  `compose.yaml` pin. Note the version prefix is `v3.2.0-alpha`, not `v3.1.0-alpha`: the branch was
+  rebased onto a main that bumped the workspace version. Adds, over `0897a4d`: the NFA walk is
+  iterative and remembers verdicts, so a long match converges instead of re-deriving; an overflowed
+  `WITHIN` deadline reads as a window that never closes; the MATCH_RECOGNIZE grammar words are
+  contextual and match only when unquoted; dead `DEFINE` symbols and foreign `PREV` anchors are
+  rejected at bind time, along with four further binder holes; walk recursion is bounded,
+  epsilon-transitions are metered, and a data error no longer kills the executor; and the scan
+  budget is bounded on the data path.
+  Verified on the Linux rig: `make smoke` 5/5 against the recorded `expected/` with no re-blessing,
+  from a cleaned data volume.
+- `…--mr--0897a4d--feat-match-recognize-v2` — the previous head. Adds, over `bee0fbd`: a starved
+  visit is allowed to emit and a held match's rows are never pruned; the scan cursor no longer
+  advances past a budget-aborted start; the whole-pattern NFA state cap is re-checked on decode; a `WITHIN` bound that widens the `ORDER BY`
   type is rejected at bind time; and CI runs the recovery suite. The branch was rebased, so this is
   not a descendant of `bee0fbd`.
   Verified on the Linux rig: `make smoke` 5/5 against the recorded `expected/` with no re-blessing,
   so none of the above changed the semantics this bench asserts.
-- `…--mr--bee0fbd--feat-match-recognize-v2` — the previous head: all six review rounds (incl. the
+- `…--mr--bee0fbd--feat-match-recognize-v2` — the head before that: all six review rounds (incl. the
   budget-truncation and calendar-interval WITHIN fixes, the `_match_id` epoch floor, and the
   allocation/hot-path perf batch). Proto wire format changed vs older tags — do not mix a frontend
   and compute node from different tags.

@@ -24,7 +24,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// The Makefile's pinned default — see `RW_IMAGE ?=` at the top of `/Makefile`. Kept in sync by
 /// hand; there is no single source of truth shared between `make` and this binary.
 pub const DEFAULT_IMAGE: &str =
-    "ghcr.io/dahankzter/risingwave:v3.1.0-alpha--mr--bee0fbd--feat-match-recognize-v2";
+    "ghcr.io/dahankzter/risingwave:v3.2.0-alpha--mr--4afdc2a--feat-match-recognize-v2";
 pub const DEFAULT_NAME: &str = "rw-tests";
 pub const DATA_VOLUME: &str = "rw-tests-data";
 
